@@ -3,7 +3,7 @@ BuildSpec AI - AI QA/QC Copilot for Construction Engineering Documents
 
 A production-ready Streamlit application that reviews technical PDFs for:
 - Compliance gaps
-- Contradictions  
+- Contradictions
 - Missing sections
 - Unclear requirements
 - Coordination risks
@@ -26,10 +26,12 @@ import re
 import hashlib
 import tempfile
 import uuid
+import atexit
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, field, asdict
 from enum import Enum
+from pathlib import Path
 
 import streamlit as st
 import fitz  # PyMuPDF
@@ -47,7 +49,7 @@ load_dotenv()
 
 # App configuration
 APP_NAME = "BuildSpec AI"
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.1.0"
 APP_TAGLINE = "AI QA/QC Copilot for Construction Engineering Documents"
 APP_DESCRIPTION = "Review technical PDFs for compliance gaps, contradictions, missing sections, and coordination risks with page-cited RAG evidence."
 
@@ -63,6 +65,20 @@ MAX_CHARS = 500000
 MAX_CHUNKS = 500
 CHUNK_SIZE = 800
 CHUNK_OVERLAP = 100
+
+# Temp file tracking for cleanup
+_temp_files = []
+
+def cleanup_temp_files():
+    """Clean up temporary files on exit."""
+    for filepath in _temp_files:
+        try:
+            if os.path.exists(filepath):
+                os.unlink(filepath)
+        except:
+            pass
+
+atexit.register(cleanup_temp_files)
 
 # ============================================================================
 # ENUMS & CONSTANTS
@@ -167,17 +183,17 @@ FOCUS_MODES = {
 REVIEW_PASSES = {
     'completeness': {
         'name': 'Completeness Check',
-        'query': 'What required sections, specifications, or details appear to be missing or incomplete?',
+        'query': 'submittals shop drawings product data quality assurance scope general requirements warranty closeout',
         'focus_types': [IssueType.MISSING_SECTION, IssueType.UNCLEAR_REQUIREMENT]
     },
     'contradictions': {
-        'name': 'Contradiction Analysis', 
-        'query': 'Are there any conflicting requirements, contradictions, or ambiguous specifications?',
+        'name': 'Contradiction Analysis',
+        'query': 'specifications requirements materials products installation execution methods procedures standards',
         'focus_types': [IssueType.CONTRADICTION, IssueType.UNCLEAR_REQUIREMENT]
     },
     'compliance': {
         'name': 'Compliance & Coordination Review',
-        'query': 'What compliance gaps or coordination risks exist between disciplines?',
+        'query': 'code compliance IBC NEC NFPA safety fire protection coordination between trades MEP structural',
         'focus_types': [IssueType.COMPLIANCE_GAP, IssueType.COORDINATION_RISK]
     }
 }
@@ -194,7 +210,7 @@ class PageData:
     char_count: int
     preview: str = ""
     sections: List[str] = field(default_factory=list)
-    
+
     def __post_init__(self):
         if not self.preview:
             self.preview = self.text[:200] + "..." if len(self.text) > 200 else self.text
@@ -208,7 +224,7 @@ class ChunkData:
     preview: str = ""
     section: str = ""
     similarity: float = 0.0
-    
+
     def __post_init__(self):
         if not self.preview:
             self.preview = self.text[:150] + "..." if len(self.text) > 150 else self.text
@@ -228,7 +244,7 @@ class Finding:
     evidence: str
     recommended_action: str
     source_chunks: List[int] = field(default_factory=list)
-    
+
     def to_dict(self) -> Dict:
         return asdict(self)
 
@@ -271,11 +287,11 @@ st.set_page_config(
 )
 
 # ============================================================================
-# CUSTOM CSS
+# CUSTOM CSS (Enhanced for better UI)
 # ============================================================================
 
 def inject_custom_css():
-    """Inject premium dark theme CSS."""
+    """Inject premium dark theme CSS with improved spacing and layout."""
     st.markdown("""
 <style>
     /* CSS Variables */
@@ -293,199 +309,225 @@ def inject_custom_css():
         --text-secondary: #94a3b8;
         --text-muted: #64748b;
     }
-    
+
     /* Hide Streamlit defaults */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
-    
+
     /* Main container */
     .main .block-container {
-        padding-top: 1.5rem;
-        padding-bottom: 2rem;
+        padding-top: 2rem;
+        padding-bottom: 3rem;
         max-width: 1400px;
     }
-    
-    /* Hero section */
+
+    /* Hero section - improved gradient */
     .hero-container {
         background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
         border: 1px solid #334155;
         border-radius: 16px;
-        padding: 2rem;
-        margin-bottom: 1.5rem;
+        padding: 2.5rem;
+        margin-bottom: 2rem;
         text-align: center;
     }
-    
+
     .hero-title {
-        font-size: 2.5rem;
+        font-size: 2.75rem;
         font-weight: 800;
         background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #06b6d4 100%);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         background-clip: text;
-        margin-bottom: 0.25rem;
+        margin-bottom: 0.5rem;
+        letter-spacing: -0.02em;
     }
-    
+
     .hero-subtitle {
         font-size: 1.125rem;
         color: #94a3b8;
         margin-bottom: 0.75rem;
+        font-weight: 500;
     }
-    
+
     .hero-description {
-        font-size: 0.9rem;
+        font-size: 0.95rem;
         color: #64748b;
-        max-width: 700px;
-        margin: 0 auto 1rem auto;
+        max-width: 750px;
+        margin: 0 auto 1.25rem auto;
+        line-height: 1.6;
     }
-    
-    /* Feature chips */
+
+    /* Feature chips - improved */
     .chip-container {
         display: flex;
         justify-content: center;
-        gap: 0.5rem;
+        gap: 0.6rem;
         flex-wrap: wrap;
+        margin-top: 1rem;
     }
-    
+
     .chip {
         display: inline-flex;
         align-items: center;
-        gap: 0.35rem;
-        padding: 0.35rem 0.75rem;
+        gap: 0.4rem;
+        padding: 0.4rem 0.85rem;
         background: #334155;
         border: 1px solid #475569;
         border-radius: 9999px;
         font-size: 0.75rem;
         color: #e2e8f0;
+        font-weight: 500;
     }
-    
-    /* Cards */
+
+    /* Cards - improved spacing */
     .card {
         background: #1e293b;
         border: 1px solid #334155;
         border-radius: 12px;
-        padding: 1.25rem;
-        margin-bottom: 1rem;
+        padding: 1.5rem;
+        margin-bottom: 1.25rem;
     }
-    
+
     .card-title {
-        font-size: 1rem;
+        font-size: 1.05rem;
         font-weight: 600;
         color: #f8fafc;
-        margin-bottom: 0.75rem;
+        margin-bottom: 1rem;
         display: flex;
         align-items: center;
-        gap: 0.5rem;
+        gap: 0.6rem;
     }
-    
-    /* Document snapshot */
+
+    /* Document snapshot - improved */
     .snapshot-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-        gap: 0.75rem;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 0.85rem;
     }
-    
+
     .snapshot-item {
         background: #0f172a;
-        border-radius: 8px;
-        padding: 0.75rem;
+        border-radius: 10px;
+        padding: 0.9rem;
         text-align: center;
+        transition: all 0.2s;
     }
-    
+
+    .snapshot-item:hover {
+        background: #1e293b;
+        transform: translateY(-2px);
+    }
+
     .snapshot-value {
-        font-size: 1.25rem;
+        font-size: 1.35rem;
         font-weight: 700;
         color: #f8fafc;
+        margin-bottom: 0.25rem;
     }
-    
+
     .snapshot-label {
         font-size: 0.7rem;
         color: #64748b;
         text-transform: uppercase;
         letter-spacing: 0.05em;
-        margin-top: 0.25rem;
     }
-    
-    /* Metrics row */
+
+    /* Metrics row - improved */
     .metric-card {
         background: #1e293b;
         border: 1px solid #334155;
         border-radius: 12px;
-        padding: 1rem;
+        padding: 1.25rem;
         text-align: center;
+        transition: all 0.2s;
     }
-    
+
+    .metric-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    }
+
     .metric-value {
-        font-size: 1.75rem;
+        font-size: 2rem;
         font-weight: 700;
         color: #f8fafc;
+        margin-bottom: 0.25rem;
     }
-    
+
     .metric-label {
-        font-size: 0.75rem;
+        font-size: 0.8rem;
         color: #94a3b8;
-        margin-top: 0.25rem;
+        font-weight: 500;
     }
-    
+
     .metric-high { border-left: 4px solid #ef4444; }
     .metric-medium { border-left: 4px solid #f59e0b; }
     .metric-low { border-left: 4px solid #10b981; }
     .metric-total { border-left: 4px solid #6366f1; }
     .metric-critical { border-left: 4px solid #dc2626; }
-    
-    /* Finding cards */
+
+    /* Finding cards - improved */
     .finding-card {
         background: #1e293b;
         border: 1px solid #334155;
         border-radius: 12px;
-        padding: 1.25rem;
-        margin-bottom: 0.75rem;
+        padding: 1.5rem;
+        margin-bottom: 1rem;
         border-left: 4px solid #6366f1;
+        transition: all 0.2s;
     }
-    
+
+    .finding-card:hover {
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+        transform: translateY(-1px);
+    }
+
     .finding-card.high { border-left-color: #ef4444; }
     .finding-card.medium { border-left-color: #f59e0b; }
     .finding-card.low { border-left-color: #10b981; }
-    .finding-card.critical-priority { border-left-color: #dc2626; }
-    
+    .finding-card.critical-priority { border-left-color: #dc2626; border-left-width: 5px; }
+
     .finding-header {
         display: flex;
         justify-content: space-between;
         align-items: flex-start;
-        margin-bottom: 0.5rem;
+        margin-bottom: 0.75rem;
     }
-    
+
     .finding-title {
-        font-size: 1rem;
+        font-size: 1.05rem;
         font-weight: 600;
         color: #f8fafc;
         flex: 1;
+        line-height: 1.4;
     }
-    
+
     .finding-id {
         font-size: 0.7rem;
         color: #64748b;
         font-family: monospace;
+        margin-left: 1rem;
     }
-    
+
     .finding-badges {
         display: flex;
-        gap: 0.35rem;
+        gap: 0.4rem;
         flex-wrap: wrap;
-        margin-bottom: 0.75rem;
+        margin-bottom: 0.85rem;
     }
-    
+
     .badge {
         display: inline-flex;
         align-items: center;
-        padding: 0.2rem 0.6rem;
+        padding: 0.25rem 0.65rem;
         border-radius: 9999px;
         font-size: 0.65rem;
         font-weight: 600;
         text-transform: uppercase;
-        letter-spacing: 0.02em;
+        letter-spacing: 0.03em;
     }
-    
+
     .badge-type { background: #312e81; color: #a5b4fc; }
     .badge-severity-high { background: #7f1d1d; color: #fca5a5; }
     .badge-severity-medium { background: #78350f; color: #fcd34d; }
@@ -496,269 +538,290 @@ def inject_custom_css():
     .badge-priority-critical { background: #7f1d1d; color: #fca5a5; }
     .badge-priority-important { background: #7c2d12; color: #fdba74; }
     .badge-priority-review { background: #164e63; color: #67e8f9; }
-    
+
     .finding-description {
         color: #cbd5e1;
-        margin-bottom: 0.75rem;
-        line-height: 1.5;
+        margin-bottom: 0.85rem;
+        line-height: 1.6;
         font-size: 0.9rem;
     }
-    
+
     .finding-section {
         background: #0f172a;
         border: 1px solid #334155;
         border-radius: 8px;
-        padding: 0.75rem;
-        margin-bottom: 0.5rem;
+        padding: 0.85rem;
+        margin-bottom: 0.6rem;
     }
-    
+
     .finding-section-label {
         font-size: 0.65rem;
         color: #64748b;
         text-transform: uppercase;
         letter-spacing: 0.05em;
-        margin-bottom: 0.35rem;
+        margin-bottom: 0.4rem;
         display: flex;
         align-items: center;
         gap: 0.35rem;
+        font-weight: 600;
     }
-    
+
     .finding-evidence {
         font-size: 0.85rem;
         color: #94a3b8;
         font-style: italic;
+        line-height: 1.5;
     }
-    
+
     .finding-action {
         background: #0d3320;
         border: 1px solid #166534;
         border-radius: 8px;
-        padding: 0.75rem;
+        padding: 0.85rem;
         font-size: 0.85rem;
         color: #86efac;
+        line-height: 1.5;
     }
-    
+
     .finding-action-label {
         font-size: 0.65rem;
         color: #4ade80;
         text-transform: uppercase;
         letter-spacing: 0.05em;
-        margin-bottom: 0.35rem;
+        margin-bottom: 0.4rem;
+        font-weight: 600;
     }
-    
+
     /* Summary report */
     .summary-card {
         background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
         border: 1px solid #334155;
         border-radius: 16px;
-        padding: 1.5rem;
-        margin: 1rem 0;
+        padding: 1.75rem;
+        margin: 1.25rem 0;
     }
-    
+
     .summary-title {
-        font-size: 1.25rem;
+        font-size: 1.35rem;
         font-weight: 700;
         color: #f8fafc;
-        margin-bottom: 1rem;
+        margin-bottom: 1.25rem;
         display: flex;
         align-items: center;
-        gap: 0.5rem;
+        gap: 0.6rem;
     }
-    
+
     .summary-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-        gap: 0.75rem;
-        margin-bottom: 1rem;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 0.85rem;
+        margin-bottom: 1.25rem;
     }
-    
+
     .summary-item {
         background: #334155;
-        border-radius: 8px;
-        padding: 0.75rem;
+        border-radius: 10px;
+        padding: 0.9rem;
     }
-    
+
     .summary-item-label {
-        font-size: 0.65rem;
+        font-size: 0.7rem;
         color: #94a3b8;
         text-transform: uppercase;
         letter-spacing: 0.05em;
+        font-weight: 500;
     }
-    
+
     .summary-item-value {
-        font-size: 1.1rem;
+        font-size: 1.15rem;
         font-weight: 600;
         color: #f8fafc;
-        margin-top: 0.15rem;
+        margin-top: 0.25rem;
     }
-    
+
     /* Discipline breakdown */
     .discipline-bar {
         display: flex;
-        gap: 0.5rem;
+        gap: 0.6rem;
         flex-wrap: wrap;
-        margin-top: 0.75rem;
+        margin-top: 0.85rem;
     }
-    
+
     .discipline-item {
         background: #334155;
-        border-radius: 6px;
-        padding: 0.5rem 0.75rem;
-        font-size: 0.8rem;
+        border-radius: 8px;
+        padding: 0.6rem 0.9rem;
+        font-size: 0.85rem;
     }
-    
+
     .discipline-count {
         font-weight: 700;
         color: #f8fafc;
     }
-    
+
     .discipline-name {
         color: #94a3b8;
-        margin-left: 0.25rem;
+        margin-left: 0.3rem;
     }
-    
-    /* Empty state */
+
+    /* Empty state - improved */
     .empty-state {
         text-align: center;
-        padding: 3rem 2rem;
-        background: #1e293b;
+        padding: 3.5rem 2rem;
+        background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
         border: 1px solid #334155;
         border-radius: 16px;
+        margin: 1.5rem 0;
     }
-    
+
     .empty-state-icon {
-        font-size: 3rem;
-        margin-bottom: 0.75rem;
+        font-size: 3.5rem;
+        margin-bottom: 1rem;
+        filter: grayscale(30%);
     }
-    
+
     .empty-state-title {
-        font-size: 1.25rem;
+        font-size: 1.35rem;
         font-weight: 600;
         color: #f8fafc;
-        margin-bottom: 0.5rem;
+        margin-bottom: 0.6rem;
     }
-    
+
     .empty-state-description {
         color: #94a3b8;
-        max-width: 450px;
+        max-width: 500px;
         margin: 0 auto;
-        font-size: 0.9rem;
+        font-size: 0.95rem;
+        line-height: 1.6;
     }
-    
+
     /* Progress pipeline */
     .pipeline-step {
         display: flex;
         align-items: center;
-        gap: 0.75rem;
-        padding: 0.5rem 0;
+        gap: 0.85rem;
+        padding: 0.6rem 0;
     }
-    
+
     .pipeline-icon {
-        width: 24px;
-        height: 24px;
+        width: 28px;
+        height: 28px;
         border-radius: 50%;
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 0.75rem;
+        font-size: 0.8rem;
         background: #334155;
         color: #94a3b8;
+        transition: all 0.3s;
     }
-    
+
     .pipeline-icon.active {
         background: #6366f1;
         color: white;
+        box-shadow: 0 0 12px rgba(99, 102, 241, 0.4);
     }
-    
+
     .pipeline-icon.complete {
         background: #10b981;
         color: white;
     }
-    
+
     .pipeline-text {
         color: #94a3b8;
-        font-size: 0.85rem;
+        font-size: 0.9rem;
     }
-    
+
     .pipeline-text.active {
         color: #f8fafc;
         font-weight: 500;
     }
-    
+
     /* Evidence panel */
     .evidence-chunk {
         background: #0f172a;
         border: 1px solid #334155;
-        border-radius: 8px;
-        padding: 0.75rem;
-        margin-bottom: 0.5rem;
+        border-radius: 10px;
+        padding: 0.9rem;
+        margin-bottom: 0.6rem;
     }
-    
+
     .evidence-header {
         display: flex;
         justify-content: space-between;
-        margin-bottom: 0.5rem;
+        margin-bottom: 0.6rem;
     }
-    
+
     .evidence-page {
         font-size: 0.75rem;
         color: #a78bfa;
         font-weight: 600;
     }
-    
+
     .evidence-similarity {
         font-size: 0.7rem;
         color: #64748b;
     }
-    
+
     .evidence-text {
-        font-size: 0.8rem;
+        font-size: 0.85rem;
         color: #94a3b8;
-        line-height: 1.4;
+        line-height: 1.5;
     }
-    
+
     /* Button styling */
     .stButton > button {
         background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
         color: white;
         border: none;
-        border-radius: 8px;
-        padding: 0.6rem 1.25rem;
+        border-radius: 10px;
+        padding: 0.7rem 1.5rem;
         font-weight: 600;
         transition: all 0.2s;
     }
-    
+
     .stButton > button:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+        transform: translateY(-2px);
+        box-shadow: 0 6px 16px rgba(99, 102, 241, 0.4);
     }
-    
+
     /* Tabs styling */
     .stTabs [data-baseweb="tab-list"] {
-        gap: 0.5rem;
+        gap: 0.6rem;
+        padding-bottom: 0.5rem;
     }
-    
+
     .stTabs [data-baseweb="tab"] {
         background: #334155;
-        border-radius: 8px 8px 0 0;
-        padding: 0.5rem 1rem;
+        border-radius: 10px 10px 0 0;
+        padding: 0.6rem 1.25rem;
+        font-weight: 500;
     }
-    
-    /* Footer */
+
+    /* Footer - improved */
     .footer {
         text-align: center;
-        padding: 1.5rem;
+        padding: 2rem 1rem;
         color: #64748b;
-        font-size: 0.8rem;
+        font-size: 0.85rem;
         border-top: 1px solid #334155;
-        margin-top: 2rem;
+        margin-top: 3rem;
     }
-    
+
+    .footer p {
+        margin: 0.35rem 0;
+    }
+
     /* Responsive adjustments */
     @media (max-width: 768px) {
-        .hero-title { font-size: 1.75rem; }
+        .hero-title { font-size: 2rem; }
         .snapshot-grid { grid-template-columns: repeat(2, 1fr); }
         .summary-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    /* Filter row spacing */
+    .stMultiSelect {
+        margin-bottom: 0.5rem;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -788,7 +851,9 @@ def init_session_state():
         'current_file_hash': None,
         'analysis_steps': [],
         'error_message': None,
-        'grouping_mode': 'severity'
+        'grouping_mode': 'severity',
+        'use_tfidf': False,
+        'tfidf_vocab': None
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -797,12 +862,12 @@ def init_session_state():
 init_session_state()
 
 # ============================================================================
-# UTILITY FUNCTIONS
+# UTILITY FUNCTIONS (Enhanced Security)
 # ============================================================================
 
 def get_file_hash(file_content: bytes) -> str:
-    """Generate stable hash for file content."""
-    return hashlib.md5(file_content).hexdigest()[:12]
+    """Generate stable hash for file content using SHA256 (secure)."""
+    return hashlib.sha256(file_content).hexdigest()[:16]
 
 def generate_finding_id() -> str:
     """Generate unique finding ID."""
@@ -828,23 +893,27 @@ def normalize_whitespace(text: str) -> str:
     return re.sub(r'\s+', ' ', text).strip()
 
 # ============================================================================
-# OPENAI CLIENT
+# OPENAI CLIENT (Enhanced Error Handling)
 # ============================================================================
 
 @st.cache_resource
 def get_openai_client() -> Optional[OpenAI]:
-    """Get cached OpenAI client."""
+    """Get cached OpenAI client with robust error handling."""
     api_key = os.getenv('OPENAI_API_KEY')
     if not api_key:
         try:
             api_key = st.secrets.get('OPENAI_API_KEY')
         except:
             pass
-    
-    if not api_key:
+
+    if not api_key or api_key == 'sk-your-api-key-here':
         return None
-    
-    return OpenAI(api_key=api_key)
+
+    try:
+        return OpenAI(api_key=api_key)
+    except Exception as e:
+        st.error(f"Failed to initialize OpenAI client: {str(e)}")
+        return None
 
 # ============================================================================
 # SECTION DETECTION
@@ -852,89 +921,119 @@ def get_openai_client() -> Optional[OpenAI]:
 
 def detect_sections(text: str) -> List[str]:
     """
-    Detect likely section headers from document text.
-    Uses heuristics for common technical document patterns.
+    Detect likely section headers from construction document text.
+    Uses heuristics for CSI MasterFormat and common technical document patterns.
     """
     sections = []
     lines = text.split('\n')
-    
+
     for line in lines:
         line = line.strip()
-        if not line or len(line) < 3 or len(line) > 100:
+        if not line or len(line) < 3 or len(line) > 120:
             continue
-        
-        # Pattern 1: All caps lines (likely headers)
-        if line.isupper() and len(line) > 5:
+
+        # Pattern 1: CSI MasterFormat section numbers (e.g., "01 10 00", "23 31 00")
+        if re.match(r'^(\d{2}\s*\d{2}\s*\d{2})\s+', line):
             sections.append(line)
             continue
-        
-        # Pattern 2: Numbered sections (1.0, 1.1, SECTION 1, etc.)
-        if re.match(r'^(?:SECTION\s+)?(\d+\.?\d*)\s+[A-Z]', line):
+
+        # Pattern 2: Section with number (SECTION 01 10 00, Section 23 05 00)
+        if re.match(r'^SECTION\s+\d{2}\s*\d{2}\s*\d{2}', line, re.IGNORECASE):
             sections.append(line)
             continue
-        
-        # Pattern 3: Article/Part headers
-        if re.match(r'^(?:ARTICLE|PART|DIVISION|CHAPTER)\s+[IVXLCDM\d]+', line, re.IGNORECASE):
+
+        # Pattern 3: PART headers (PART 1, PART 2, PART 3 - CSI 3-part format)
+        if re.match(r'^PART\s+[123]\s*[-–:]?\s*[A-Z]', line, re.IGNORECASE):
             sections.append(line)
             continue
-        
-        # Pattern 4: Lines ending with colon that start with caps
-        if line.endswith(':') and line[0].isupper() and len(line) > 10:
-            sections.append(line.rstrip(':'))
+
+        # Pattern 4: Division headers
+        if re.match(r'^DIVISION\s+\d+', line, re.IGNORECASE):
+            sections.append(line)
             continue
-    
+
+        # Pattern 5: All caps lines that look like headers (longer than 5 chars)
+        if line.isupper() and len(line) > 5 and not line.startswith('NOTE'):
+            sections.append(line)
+            continue
+
+        # Pattern 6: Numbered sections (1.0, 1.1, 2.01, etc.)
+        if re.match(r'^(\d+\.?\d*)\s+[A-Z]', line):
+            sections.append(line)
+            continue
+
+        # Pattern 7: Article headers
+        if re.match(r'^ARTICLE\s+[IVXLCDM\d]+', line, re.IGNORECASE):
+            sections.append(line)
+            continue
+
+        # Pattern 8: Common construction spec headers
+        construction_headers = [
+            'GENERAL', 'SCOPE', 'SUBMITTALS', 'QUALITY ASSURANCE',
+            'PRODUCTS', 'MATERIALS', 'EQUIPMENT', 'EXECUTION',
+            'INSTALLATION', 'FABRICATION', 'WARRANTY', 'MAINTENANCE'
+        ]
+        if any(line.upper().startswith(h) for h in construction_headers):
+            sections.append(line)
+            continue
+
     # Deduplicate and limit
     seen = set()
     unique_sections = []
     for s in sections:
-        s_clean = s.strip()[:60]
-        if s_clean.lower() not in seen:
-            seen.add(s_clean.lower())
+        s_clean = s.strip()[:80]
+        normalized = re.sub(r'\s+', ' ', s_clean.lower())
+        if normalized not in seen:
+            seen.add(normalized)
             unique_sections.append(s_clean)
-    
-    return unique_sections[:30]  # Limit to reasonable number
+
+    return unique_sections[:40]  # Limit to reasonable number
 
 # ============================================================================
-# PDF EXTRACTION
+# PDF EXTRACTION (Enhanced with Better Temp File Handling)
 # ============================================================================
 
 def extract_pdf_pages(pdf_file) -> Tuple[List[PageData], List[str]]:
     """
     Extract text from PDF file page by page using PyMuPDF.
     Returns pages and detected sections.
+    Enhanced with better temp file cleanup.
     """
     pages = []
     all_sections = []
-    
+    tmp_path = None
+
     try:
+        # Create temp file
         with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
             tmp_file.write(pdf_file.getvalue())
             tmp_path = tmp_file.name
-        
+            _temp_files.append(tmp_path)
+
         doc = fitz.open(tmp_path)
         total_pages = len(doc)
-        
+
         # Check page limit
         if total_pages > MAX_PAGES:
             st.warning(f"Document has {total_pages} pages. Processing first {MAX_PAGES} pages only.")
             total_pages = MAX_PAGES
-        
+
         for page_num in range(total_pages):
             try:
                 page = doc[page_num]
                 text = page.get_text("text")
-                
+
                 # Clean text while preserving structure for section detection
                 raw_text = text
                 text_clean = normalize_whitespace(text)
-                
+
                 if len(text_clean) < 30:
                     continue
-                
+
                 # Detect sections from raw text (preserves line breaks)
                 page_sections = detect_sections(raw_text)
                 all_sections.extend(page_sections)
-                
+
                 page_data = PageData(
                     page_number=page_num + 1,
                     text=text_clean,
@@ -942,19 +1041,27 @@ def extract_pdf_pages(pdf_file) -> Tuple[List[PageData], List[str]]:
                     sections=page_sections
                 )
                 pages.append(page_data)
-                
+
             except Exception as e:
                 if st.session_state.debug_mode:
                     st.warning(f"Could not extract page {page_num + 1}: {str(e)}")
                 continue
-        
+
         doc.close()
-        os.unlink(tmp_path)
-        
+
     except Exception as e:
         st.error(f"Error extracting PDF: {str(e)}")
         return [], []
-    
+    finally:
+        # Clean up temp file
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+                if tmp_path in _temp_files:
+                    _temp_files.remove(tmp_path)
+            except:
+                pass
+
     # Deduplicate sections
     seen = set()
     unique_sections = []
@@ -962,7 +1069,7 @@ def extract_pdf_pages(pdf_file) -> Tuple[List[PageData], List[str]]:
         if s.lower() not in seen:
             seen.add(s.lower())
             unique_sections.append(s)
-    
+
     return pages, unique_sections[:25]
 
 # ============================================================================
@@ -980,25 +1087,25 @@ def chunk_pages(pages: List[PageData]) -> List[ChunkData]:
         length_function=len,
         separators=["\n\n", "\n", ". ", "; ", ", ", " ", ""]
     )
-    
+
     chunks = []
     chunk_idx = 0
-    
+
     for page in pages:
         if chunk_idx >= MAX_CHUNKS:
             break
-            
+
         page_chunks = splitter.split_text(page.text)
-        
+
         # Get current section context from page
         current_section = page.sections[0] if page.sections else ""
-        
+
         for chunk_text in page_chunks:
             if chunk_idx >= MAX_CHUNKS:
                 break
             if len(chunk_text.strip()) < 30:
                 continue
-            
+
             chunk = ChunkData(
                 chunk_id=chunk_idx,
                 page_number=page.page_number,
@@ -1007,7 +1114,7 @@ def chunk_pages(pages: List[PageData]) -> List[ChunkData]:
             )
             chunks.append(chunk)
             chunk_idx += 1
-    
+
     return chunks
 
 # ============================================================================
@@ -1037,10 +1144,10 @@ def build_tfidf_vectors(texts: List[str]) -> Tuple[np.ndarray, Dict[str, int]]:
         for word in words:
             if word not in vocab:
                 vocab[word] = len(vocab)
-    
+
     if not vocab:
         return np.array([]), vocab
-    
+
     # Build document frequency
     doc_freq = np.zeros(len(vocab))
     for text in texts:
@@ -1048,11 +1155,11 @@ def build_tfidf_vectors(texts: List[str]) -> Tuple[np.ndarray, Dict[str, int]]:
         for word in words:
             if word in vocab:
                 doc_freq[vocab[word]] += 1
-    
+
     # Build TF-IDF vectors
     n_docs = len(texts)
     idf = np.log((n_docs + 1) / (doc_freq + 1)) + 1
-    
+
     vectors = []
     for text in texts:
         words = re.findall(r'\b[a-z]{2,}\b', text.lower())
@@ -1060,42 +1167,42 @@ def build_tfidf_vectors(texts: List[str]) -> Tuple[np.ndarray, Dict[str, int]]:
         for word in words:
             if word in vocab:
                 tf[vocab[word]] += 1
-        
+
         # Normalize TF
         if tf.sum() > 0:
             tf = tf / tf.sum()
-        
+
         # TF-IDF
         tfidf = tf * idf
-        
+
         # L2 normalize
         norm = np.linalg.norm(tfidf)
         if norm > 0:
             tfidf = tfidf / norm
-        
+
         vectors.append(tfidf)
-    
+
     return np.array(vectors), vocab
 
 def get_tfidf_query_vector(query: str, vocab: Dict[str, int], n_docs: int, doc_freq: np.ndarray) -> np.ndarray:
     """Get TF-IDF vector for a query."""
     words = re.findall(r'\b[a-z]{2,}\b', query.lower())
     tf = np.zeros(len(vocab))
-    
+
     for word in words:
         if word in vocab:
             tf[vocab[word]] += 1
-    
+
     if tf.sum() > 0:
         tf = tf / tf.sum()
-    
+
     idf = np.log((n_docs + 1) / (doc_freq + 1)) + 1
     tfidf = tf * idf
-    
+
     norm = np.linalg.norm(tfidf)
     if norm > 0:
         tfidf = tfidf / norm
-    
+
     return tfidf
 
 def get_embeddings_batch(texts: List[str], client: OpenAI, batch_size: int = 100) -> Tuple[np.ndarray, bool]:
@@ -1105,7 +1212,7 @@ def get_embeddings_batch(texts: List[str], client: OpenAI, batch_size: int = 100
     Falls back to TF-IDF if OpenAI embeddings fail.
     """
     all_embeddings = []
-    
+
     for i in range(0, len(texts), batch_size):
         batch = texts[i:i + batch_size]
         try:
@@ -1117,8 +1224,10 @@ def get_embeddings_batch(texts: List[str], client: OpenAI, batch_size: int = 100
             all_embeddings.extend(batch_embeddings)
         except Exception as e:
             # Return empty to signal fallback needed
+            if st.session_state.debug_mode:
+                st.warning(f"Embedding API error: {str(e)[:100]}")
             return np.array([]), False
-    
+
     return np.array(all_embeddings), True
 
 def cosine_similarity_matrix(a: np.ndarray, b: np.ndarray) -> np.ndarray:
@@ -1137,17 +1246,17 @@ def retrieve_chunks_tfidf(
     """Retrieve chunks using TF-IDF similarity."""
     if not chunks or chunk_vectors.size == 0:
         return []
-    
+
     # Build document frequency from chunk vectors
     doc_freq = (chunk_vectors > 0).sum(axis=0)
-    
+
     # Get query vector
     query_vector = get_tfidf_query_vector(query, vocab, len(chunks), doc_freq)
-    
+
     # Compute similarities
     similarities = np.dot(chunk_vectors, query_vector)
     top_indices = np.argsort(similarities)[::-1][:top_k]
-    
+
     retrieved = []
     for idx in top_indices:
         chunk = ChunkData(
@@ -1159,7 +1268,7 @@ def retrieve_chunks_tfidf(
             similarity=float(similarities[idx])
         )
         retrieved.append(chunk)
-    
+
     return retrieved
 
 def retrieve_chunks(
@@ -1174,13 +1283,13 @@ def retrieve_chunks(
     """Retrieve most relevant chunks for a query."""
     if not chunks:
         return []
-    
+
     # Use TF-IDF if specified or if embeddings are empty
     if use_tfidf or chunk_embeddings.size == 0:
         if vocab is None:
             return chunks[:top_k]  # Fallback to first chunks
         return retrieve_chunks_tfidf(query, chunks, chunk_embeddings, vocab, top_k)
-    
+
     # Use OpenAI embeddings
     query_embedding, success = get_embeddings_batch([query], client)
     if not success or query_embedding.size == 0:
@@ -1188,10 +1297,10 @@ def retrieve_chunks(
         if vocab:
             return retrieve_chunks_tfidf(query, chunks, chunk_embeddings, vocab, top_k)
         return chunks[:top_k]
-    
+
     similarities = cosine_similarity_matrix(query_embedding, chunk_embeddings)[0]
     top_indices = np.argsort(similarities)[::-1][:top_k]
-    
+
     retrieved = []
     for idx in top_indices:
         chunk = ChunkData(
@@ -1203,7 +1312,7 @@ def retrieve_chunks(
             similarity=float(similarities[idx])
         )
         retrieved.append(chunk)
-    
+
     return retrieved
 
 def retrieve_diverse_evidence(
@@ -1216,42 +1325,58 @@ def retrieve_diverse_evidence(
     vocab: Dict[str, int] = None
 ) -> List[ChunkData]:
     """
-    Retrieve diverse evidence using multiple queries.
-    Adapts queries based on focus mode.
+    Retrieve diverse evidence using multiple construction-specific queries.
+    Adapts queries based on focus mode for comprehensive document coverage.
     """
     mode_config = REVIEW_MODES[review_mode]
     top_k = mode_config['top_k']
-    
-    # Base queries for comprehensive retrieval
+
+    # Construction-specific base queries for comprehensive retrieval
     base_queries = [
-        "What are the key specifications, requirements, and standards mentioned?",
-        "What safety requirements and compliance specifications are defined?",
-        "What are the mechanical, electrical, and structural requirements?",
+        # Specification structure
+        "General requirements scope of work quality assurance submittals",
+        "Product specifications materials manufacturers acceptable products",
+        "Execution installation procedures methods workmanship",
+        # Technical systems
+        "HVAC mechanical plumbing piping ductwork equipment specifications",
+        "Electrical power lighting panels switchgear wiring conduit",
+        "Structural steel concrete reinforcement connections foundations",
+        # Compliance and standards
+        "Building code IBC NEC NFPA ASHRAE standards compliance requirements",
+        "Testing commissioning inspection acceptance criteria procedures",
+        # Coordination
+        "Coordination interface between trades disciplines contractors",
     ]
-    
+
     # Add focus-specific queries
     focus_config = FOCUS_MODES[focus_mode]
     if focus_config['emphasis'] == 'compliance':
         base_queries.extend([
-            "What building codes, standards, and regulatory requirements apply?",
-            "What safety and compliance specifications are mentioned?",
+            "Code compliance fire protection life safety egress requirements",
+            "ADA accessibility OSHA safety environmental permits regulations",
+            "Seismic wind load structural performance criteria design requirements",
+            "Fire alarm sprinkler smoke detection emergency systems",
         ])
     elif focus_config['emphasis'] == 'coordination':
         base_queries.extend([
-            "What coordination requirements exist between disciplines?",
-            "What interfaces and dependencies between systems are specified?",
+            "MEP coordination routing penetrations sleeves openings clearances",
+            "Sequence of work phasing scheduling dependencies milestones",
+            "Interface between architectural structural mechanical electrical",
+            "Shop drawings submittals coordination review approval process",
         ])
     elif focus_config['emphasis'] == 'completeness':
         base_queries.extend([
-            "What sections or specifications appear to be referenced but not included?",
-            "What scope items and deliverables are defined?",
+            "Submittal schedule shop drawings product data samples",
+            "Warranty guarantee maintenance operation manuals closeout",
+            "Division sections CSI MasterFormat specification organization",
+            "Referenced standards documents specifications not included",
         ])
-    
+
     all_retrieved = []
     seen_ids = set()
-    
-    chunks_per_query = max(3, top_k // len(base_queries) + 1)
-    
+
+    chunks_per_query = max(2, top_k // len(base_queries) + 1)
+
     for query in base_queries:
         retrieved = retrieve_chunks(
             query, chunks, chunk_embeddings, client, top_k=chunks_per_query,
@@ -1261,10 +1386,24 @@ def retrieve_diverse_evidence(
             if chunk.chunk_id not in seen_ids:
                 all_retrieved.append(chunk)
                 seen_ids.add(chunk.chunk_id)
-    
+
     # Sort by similarity and limit
     all_retrieved.sort(key=lambda x: x.similarity, reverse=True)
-    return all_retrieved[:top_k]
+
+    # Ensure page diversity - don't take too many chunks from same page
+    page_counts = {}
+    diverse_chunks = []
+    max_per_page = max(3, top_k // 10)
+
+    for chunk in all_retrieved:
+        page_count = page_counts.get(chunk.page_number, 0)
+        if page_count < max_per_page:
+            diverse_chunks.append(chunk)
+            page_counts[chunk.page_number] = page_count + 1
+        if len(diverse_chunks) >= top_k:
+            break
+
+    return diverse_chunks
 
 # ============================================================================
 # PROMPT CONSTRUCTION
@@ -1279,19 +1418,19 @@ def build_review_prompt(
     """Build analysis prompt with retrieved evidence."""
     mode_config = REVIEW_MODES[review_mode]
     max_issues = mode_config['max_issues']
-    
+
     # Adjust max issues for multi-pass
     if pass_type:
         max_issues = max(3, max_issues // 3)
-    
-    # Format evidence
+
+    # Format evidence with better structure
     evidence_parts = []
     for c in retrieved_chunks:
-        section_info = f" (Section: {c.section})" if c.section else ""
-        evidence_parts.append(f"[Page {c.page_number}{section_info}]:\n{c.text}")
-    
-    evidence_text = "\n\n---\n\n".join(evidence_parts)
-    
+        section_info = f" | Section: {c.section}" if c.section else ""
+        evidence_parts.append(f"[Page {c.page_number}{section_info}]\n\"\"\"\n{c.text}\n\"\"\"")
+
+    evidence_text = "\n\n" + "─" * 50 + "\n\n".join(evidence_parts)
+
     # Focus mode instructions
     focus_instructions = ""
     focus_config = FOCUS_MODES[focus_mode]
@@ -1299,105 +1438,120 @@ def build_review_prompt(
         focus_instructions = """
 ## Focus Priority: COMPLIANCE
 Prioritize identifying:
-- Missing code or standard references
-- Incomplete regulatory compliance
-- Safety specification gaps
-- Permit and approval requirements
+- Missing building code references (IBC, NEC, NFPA, ASHRAE, etc.)
+- Incomplete regulatory compliance (ADA, OSHA, local codes)
+- Safety specification gaps (fire protection, egress, ventilation)
+- Missing permit and inspection requirements
+- Inadequate testing and commissioning requirements
 """
     elif focus_config['emphasis'] == 'coordination':
         focus_instructions = """
 ## Focus Priority: COORDINATION
 Prioritize identifying:
-- Cross-discipline conflicts
-- Interface and handoff issues
-- Spatial or routing conflicts
-- Sequencing dependencies
+- MEP routing conflicts and space allocation issues
+- Structural penetration coordination gaps
+- Sequence of work dependencies not addressed
+- Interface points between trades lacking detail
+- Conflicting elevation or location requirements
 """
     elif focus_config['emphasis'] == 'completeness':
         focus_instructions = """
 ## Focus Priority: COMPLETENESS
 Prioritize identifying:
-- Missing sections or specifications
-- Referenced but absent documents
-- Incomplete scope definitions
-- Undefined requirements
+- Missing Division sections (per CSI MasterFormat)
+- Referenced specifications not included
+- Incomplete product/material specifications
+- Missing installation procedures
+- Undefined acceptance criteria
 """
-    
+
     # Pass-specific instructions
     pass_instructions = ""
     if pass_type == 'completeness':
         pass_instructions = """
 ## This Review Pass: COMPLETENESS CHECK
 Focus specifically on:
-- Missing required sections
-- Incomplete specifications
-- Undefined terms or requirements
-- Referenced but absent content
+- Required specification sections that are absent or incomplete
+- Cross-references to documents not included
+- Material/product specifications lacking manufacturer, model, or performance criteria
+- Missing submittal requirements or shop drawing procedures
+- Incomplete testing and inspection requirements
 """
     elif pass_type == 'contradictions':
         pass_instructions = """
 ## This Review Pass: CONTRADICTION ANALYSIS
 Focus specifically on:
-- Conflicting requirements
-- Inconsistent specifications
-- Ambiguous or vague language
-- Contradictory statements
+- Conflicting dimensions, tolerances, or measurements
+- Inconsistent material specifications in different sections
+- Contradictory installation methods or sequences
+- Specification vs. drawing conflicts (when referenced)
+- Conflicting code references or standards cited
 """
     elif pass_type == 'compliance':
         pass_instructions = """
 ## This Review Pass: COMPLIANCE & COORDINATION
 Focus specifically on:
-- Code and standard gaps
-- Regulatory compliance issues
-- Cross-discipline coordination risks
-- Safety specification gaps
+- Missing code compliance statements
+- Coordination requirements between MEP/Structural/Architectural
+- Gaps in quality control procedures
+- Missing fire protection and life safety requirements
+- Inadequate environmental compliance
 """
-    
-    prompt = f"""You are an expert construction engineering document QA/QC reviewer specializing in technical specification analysis.
 
-## Context
-You are reviewing extracted sections from a construction engineering document to identify potential quality issues that could impact project execution.
+    prompt = f"""You are a senior construction QA/QC engineer with 20+ years of experience reviewing technical specifications for major commercial and industrial projects.
+
+## Your Role
+You are performing a detailed technical review of a construction specification document. Your findings will be used by project managers, engineers, and contractors to identify issues BEFORE construction begins.
+
+## Review Standards
+Apply these professional standards:
+- CSI MasterFormat organization expectations
+- Standard construction specification practices
+- Building code compliance (IBC, NEC, NFPA as applicable)
+- Industry best practices for clarity and coordination
 {focus_instructions}
 {pass_instructions}
 
-## Evidence Retrieved from Document
+## Document Evidence
+The following text was extracted from the specification document:
 {evidence_text}
 
-## Issue Types
-- missing_section: Required sections, specifications, or details that appear absent
-- contradiction: Conflicting requirements or inconsistent specifications
-- compliance_gap: Areas not meeting industry standards, codes, or best practices
-- unclear_requirement: Vague, ambiguous, or incomplete specifications
-- coordination_risk: Potential conflicts between disciplines or systems
+## Issue Categories
+- **missing_section**: Required sections, specifications, details, or procedures that are absent
+- **contradiction**: Conflicting requirements, inconsistent specifications, or ambiguous language
+- **compliance_gap**: Missing code references, inadequate safety specs, or regulatory gaps
+- **unclear_requirement**: Vague language, undefined terms, or specifications open to interpretation
+- **coordination_risk**: Potential conflicts between disciplines, missing interface requirements
 
-## Required Output Format
-Return a JSON array. Each finding MUST include ALL these fields:
-- type: One of [missing_section, contradiction, compliance_gap, unclear_requirement, coordination_risk]
-- severity: One of [high, medium, low]
-- discipline: One of [mechanical, electrical, structural, general]
-- confidence: One of [high, medium, low]
-- page: Page number from evidence (integer)
-- title: Clear, specific issue title (50-80 characters, sounds like a real review comment)
-- description: Detailed explanation (2-3 sentences, specific to the document)
-- evidence: Direct quote or observation from the retrieved text supporting this finding
-- recommended_action: Specific, actionable resolution step
+## Output Requirements
+Return a JSON array. Each finding MUST have ALL fields:
 
-## Quality Standards
-1. ONLY flag issues clearly supported by the evidence
-2. Use specific page citations
-3. Write titles like professional review comments: "Missing fire alarm acceptance criteria" not "Issue with fire alarms"
-4. Descriptions must explain WHY this is a problem
-5. Evidence must quote or reference specific text
-6. Actions must be concrete and achievable
-7. Return at most {max_issues} findings
-8. Return [] if no issues are clearly evident
-9. Order by severity (high first)
+| Field | Requirements |
+|-------|-------------|
+| type | One of: missing_section, contradiction, compliance_gap, unclear_requirement, coordination_risk |
+| severity | high = safety/code/critical, medium = functionality/coordination, low = clarity/minor |
+| discipline | mechanical, electrical, structural, or general |
+| confidence | high = explicit evidence, medium = implied from context, low = inference |
+| page | Page number from the evidence (integer) |
+| title | Professional review comment (50-80 chars). Be SPECIFIC: "Missing HVAC duct pressure class for supply air" not "HVAC issue" |
+| description | 2-3 sentences explaining: (1) What is missing/wrong, (2) Why it matters for construction |
+| evidence | EXACT QUOTE from the document text showing the issue. Use "..." for truncation. |
+| recommended_action | Specific fix: "Add Section 23 31 00 with duct construction standards per SMACNA" not "Fix the issue" |
 
-## Response
-Return ONLY a valid JSON array. No markdown fencing, no explanations.
+## Critical Rules
+1. ONLY report issues with CLEAR evidence in the provided text
+2. Each finding needs a DIRECT QUOTE as evidence - do not paraphrase
+3. Be SPECIFIC - mention actual section numbers, product types, or requirements
+4. Consider real-world construction impact
+5. Return at most {max_issues} findings, ordered by severity (high first)
+6. Return an empty array [] if no genuine issues are found
+7. Do NOT invent issues - quality over quantity
 
-Example:
-[{{"type": "compliance_gap", "severity": "high", "discipline": "electrical", "confidence": "high", "page": 12, "title": "Missing emergency lighting coverage requirements", "description": "The electrical specifications do not define emergency lighting coverage for egress paths. This omission could result in code violations and safety issues during emergency evacuations.", "evidence": "Section 4.2 specifies general lighting but makes no mention of emergency fixtures or backup power.", "recommended_action": "Add emergency lighting requirements per IBC Section 1008 with battery backup specifications for all egress routes."}}]
+## Response Format
+Return ONLY a valid JSON array. No markdown code fences. No explanatory text.
+
+Example of a HIGH QUALITY finding:
+[{{"type": "compliance_gap", "severity": "high", "discipline": "electrical", "confidence": "high", "page": 23, "title": "Missing arc flash hazard analysis requirements for switchgear", "description": "Section 26 24 00 specifies 480V switchgear but does not require arc flash labeling or hazard analysis per NFPA 70E. This creates worker safety risks and potential OSHA violations during maintenance.", "evidence": "26 24 00 SWITCHGEAR: Provide 480V, 3-phase switchgear assembly... Labels shall indicate voltage and phase.", "recommended_action": "Add requirement for arc flash hazard analysis per NFPA 70E and IEEE 1584. Require arc flash warning labels with incident energy levels on all equipment rated 50V or higher."}}]
 """
     return prompt
 
@@ -1410,17 +1564,17 @@ def repair_json(text: str) -> str:
     # Remove markdown fences
     text = re.sub(r'^```(?:json)?\s*', '', text.strip())
     text = re.sub(r'\s*```$', '', text)
-    
+
     # Try to extract JSON array
     match = re.search(r'\[[\s\S]*\]', text)
     if match:
         text = match.group()
-    
+
     # Fix common issues
     text = re.sub(r',\s*}', '}', text)  # Trailing commas in objects
     text = re.sub(r',\s*]', ']', text)  # Trailing commas in arrays
     text = re.sub(r'"\s*\n\s*"', '", "', text)  # Missing commas between strings
-    
+
     return text
 
 def normalize_enum(value: str, valid_values: set, default: str) -> str:
@@ -1434,10 +1588,10 @@ def parse_model_output(raw_output: str) -> List[Dict]:
     """Parse and validate model JSON output with robust error handling."""
     if not raw_output:
         return []
-    
+
     # Repair JSON
     cleaned = repair_json(raw_output)
-    
+
     # Parse
     try:
         findings = json.loads(cleaned)
@@ -1452,41 +1606,41 @@ def parse_model_output(raw_output: str) -> List[Dict]:
                 return []
         except:
             return []
-    
+
     if not isinstance(findings, list):
         findings = [findings] if isinstance(findings, dict) else []
-    
+
     # Valid enum values
     valid_types = {e.value for e in IssueType}
     valid_severities = {e.value for e in Severity}
     valid_disciplines = {e.value for e in Discipline}
     valid_confidence = {e.value for e in Confidence}
-    
+
     validated = []
     seen_titles = set()
-    
+
     for f in findings:
         if not isinstance(f, dict):
             continue
-        
+
         # Normalize enums
         f_type = normalize_enum(f.get('type'), valid_types, IssueType.UNCLEAR_REQUIREMENT.value)
         severity = normalize_enum(f.get('severity'), valid_severities, Severity.MEDIUM.value)
         discipline = normalize_enum(f.get('discipline'), valid_disciplines, Discipline.GENERAL.value)
         confidence = normalize_enum(f.get('confidence'), valid_confidence, Confidence.MEDIUM.value)
-        
+
         # Get title and deduplicate
         title = str(f.get('title', 'Untitled Finding'))[:100].strip()
         if not title or title.lower() in seen_titles:
             continue
         seen_titles.add(title.lower())
-        
+
         # Validate page
         try:
             page = max(1, int(f.get('page', 1)))
         except:
             page = 1
-        
+
         validated.append({
             'type': f_type,
             'severity': severity,
@@ -1498,7 +1652,7 @@ def parse_model_output(raw_output: str) -> List[Dict]:
             'evidence': str(f.get('evidence', ''))[:400].strip(),
             'recommended_action': str(f.get('recommended_action', ''))[:400].strip()
         })
-    
+
     return validated
 
 # ============================================================================
@@ -1507,44 +1661,134 @@ def parse_model_output(raw_output: str) -> List[Dict]:
 
 def calculate_priority(finding: Dict) -> str:
     """
-    Calculate priority score based on severity, confidence, and type.
+    Calculate priority score based on construction industry risk factors.
+    Considers severity, confidence, type, and discipline-specific impacts.
     Returns: critical, important, or review
     """
-    score = 0
-    
-    # Severity weight (0-3)
-    severity_weights = {'high': 3, 'medium': 2, 'low': 1}
+    score = 0.0
+
+    # Severity weight (0-4) - primary factor
+    severity_weights = {'high': 4, 'medium': 2.5, 'low': 1}
     score += severity_weights.get(finding['severity'], 2)
-    
-    # Confidence weight (0-2)
+
+    # Confidence weight (0-2) - affects reliability
     confidence_weights = {'high': 2, 'medium': 1, 'low': 0}
     score += confidence_weights.get(finding['confidence'], 1)
-    
-    # Type weight (0-2)
+
+    # Type weight (0-3) - based on construction impact
     type_weights = {
-        'compliance_gap': 2,
-        'coordination_risk': 2,
-        'contradiction': 1.5,
-        'missing_section': 1,
-        'unclear_requirement': 0.5
+        'compliance_gap': 3,       # Code violations, safety issues - highest
+        'coordination_risk': 2.5,  # Can cause costly rework
+        'contradiction': 2,        # Creates confusion, potential disputes
+        'missing_section': 1.5,    # Incomplete specs cause RFIs
+        'unclear_requirement': 1   # May need clarification
     }
     score += type_weights.get(finding['type'], 1)
-    
-    # Calculate priority
-    if score >= 6:
+
+    # Discipline modifier - some disciplines have higher safety impact
+    discipline_modifiers = {
+        'electrical': 0.5,    # Electrical issues often safety-critical
+        'structural': 0.5,    # Structural issues affect building integrity
+        'mechanical': 0.25,   # HVAC/plumbing important for comfort/function
+        'general': 0          # General items lower priority
+    }
+    score += discipline_modifiers.get(finding['discipline'], 0)
+
+    # Critical keywords boost - safety-related findings
+    title_lower = finding.get('title', '').lower()
+    description_lower = finding.get('description', '').lower()
+    combined_text = title_lower + ' ' + description_lower
+
+    critical_keywords = [
+        'fire', 'egress', 'life safety', 'emergency', 'arc flash',
+        'seismic', 'structural integrity', 'load bearing', 'safety',
+        'code violation', 'nfpa', 'osha', 'hazard', 'grounding'
+    ]
+    if any(kw in combined_text for kw in critical_keywords):
+        score += 1
+
+    # Calculate priority thresholds
+    if score >= 7:
         return Priority.CRITICAL.value
-    elif score >= 4:
+    elif score >= 4.5:
         return Priority.IMPORTANT.value
     else:
         return Priority.REVIEW.value
 
+def validate_finding_quality(finding: Dict) -> bool:
+    """
+    Validate that a finding meets quality standards.
+    Returns True if the finding should be included.
+    """
+    # Title quality checks
+    title = finding.get('title', '')
+    if len(title) < 20:
+        return False  # Too short to be meaningful
+
+    # Reject generic/placeholder titles
+    generic_patterns = [
+        r'^issue\s+(with|in|for)\s+',
+        r'^problem\s+(with|in|for)\s+',
+        r'^missing\s+information$',
+        r'^unclear\s+requirements?$',
+        r'^general\s+issue$',
+        r'^need\s+more\s+',
+    ]
+    for pattern in generic_patterns:
+        if re.match(pattern, title.lower()):
+            return False
+
+    # Evidence quality - must have actual content
+    evidence = finding.get('evidence', '')
+    if len(evidence) < 20:
+        return False  # No real evidence provided
+
+    # Description quality
+    description = finding.get('description', '')
+    if len(description) < 30:
+        return False  # Too brief
+
+    # Recommended action quality
+    action = finding.get('recommended_action', '')
+    if len(action) < 15:
+        return False  # No actionable recommendation
+
+    # Check for hallucinated page numbers
+    page = finding.get('page', 0)
+    if page < 1 or page > 500:
+        return False  # Invalid page number
+
+    return True
+
+
 def normalize_findings(raw_findings: List[Dict]) -> List[Finding]:
     """Normalize raw findings into Finding objects with IDs and priorities."""
     normalized = []
-    
+
     for f in raw_findings:
+        # Quality validation
+        if not validate_finding_quality(f):
+            continue
+
         priority = calculate_priority(f)
-        
+
+        # Clean up text fields
+        title = f['title'].strip()
+        # Ensure title starts with capital and doesn't end with period
+        if title and title[0].islower():
+            title = title[0].upper() + title[1:]
+        title = title.rstrip('.')
+
+        description = f['description'].strip()
+        evidence = f['evidence'].strip()
+        action = f['recommended_action'].strip()
+
+        # Ensure evidence has quotes if it's a direct quote
+        if evidence and not evidence.startswith('"') and not evidence.startswith("'"):
+            # Check if it looks like a quote (contains specific technical terms)
+            if any(c in evidence for c in [':', 'shall', 'must', 'Section', 'Article']):
+                evidence = f'"{evidence}"'
+
         finding = Finding(
             id=generate_finding_id(),
             type=f['type'],
@@ -1553,28 +1797,28 @@ def normalize_findings(raw_findings: List[Dict]) -> List[Finding]:
             confidence=f['confidence'],
             priority=priority,
             page=f['page'],
-            title=f['title'],
-            description=f['description'],
-            evidence=f['evidence'],
-            recommended_action=f['recommended_action'],
+            title=title,
+            description=description,
+            evidence=evidence,
+            recommended_action=action,
             source_chunks=f.get('source_chunks', [])
         )
         normalized.append(finding)
-    
+
     return normalized
 
 def deduplicate_findings(findings: List[Finding]) -> List[Finding]:
     """Remove near-duplicate findings based on title similarity."""
     if len(findings) <= 1:
         return findings
-    
+
     unique = []
     seen_titles = set()
-    
+
     for f in findings:
         # Simple title normalization for comparison
         normalized_title = re.sub(r'[^a-z0-9]', '', f.title.lower())
-        
+
         # Check for similar titles
         is_duplicate = False
         for seen in seen_titles:
@@ -1583,11 +1827,11 @@ def deduplicate_findings(findings: List[Finding]) -> List[Finding]:
                 if normalized_title in seen or seen in normalized_title:
                     is_duplicate = True
                     break
-        
+
         if not is_duplicate:
             unique.append(f)
             seen_titles.add(normalized_title)
-    
+
     return unique
 
 def sort_findings(findings: List[Finding], sort_by: str = 'severity') -> List[Finding]:
@@ -1624,10 +1868,10 @@ def run_analysis_pass(
     """Run a single analysis pass."""
     mode_config = REVIEW_MODES[review_mode]
     pass_config = REVIEW_PASSES.get(pass_type, {})
-    
+
     # Retrieve evidence with pass-specific query if available
     query = pass_config.get('query', '')
-    
+
     if query:
         retrieved = retrieve_chunks(
             query, chunks, chunk_embeddings, client,
@@ -1639,13 +1883,13 @@ def run_analysis_pass(
             chunks, chunk_embeddings, client, review_mode, focus_mode,
             use_tfidf=use_tfidf, vocab=vocab
         )
-    
+
     if not retrieved:
         return [], [], "No relevant chunks retrieved"
-    
+
     # Build and execute prompt
     prompt = build_review_prompt(retrieved, review_mode, focus_mode, pass_type)
-    
+
     try:
         response = client.chat.completions.create(
             model=CHAT_MODEL,
@@ -1661,8 +1905,11 @@ def run_analysis_pass(
         )
         raw_output = response.choices[0].message.content
     except Exception as e:
-        return [], retrieved, f"API Error: {str(e)}"
-    
+        error_msg = f"API Error: {str(e)[:200]}"
+        if st.session_state.debug_mode:
+            st.error(error_msg)
+        return [], retrieved, error_msg
+
     findings = parse_model_output(raw_output)
     return findings, retrieved, raw_output
 
@@ -1679,43 +1926,43 @@ def run_multi_pass_analysis(
     """Run multi-pass analysis pipeline."""
     mode_config = REVIEW_MODES[review_mode]
     num_passes = mode_config['passes']
-    
+
     all_findings = []
     all_retrieved = []
     all_raw_outputs = []
     seen_chunk_ids = set()
-    
+
     passes_to_run = list(REVIEW_PASSES.keys())[:num_passes]
-    
+
     for i, pass_type in enumerate(passes_to_run):
         pass_config = REVIEW_PASSES[pass_type]
-        
+
         with progress_container:
             st.markdown(f"**Pass {i+1}/{num_passes}**: {pass_config['name']}")
-        
+
         findings, retrieved, raw_output = run_analysis_pass(
             chunks, chunk_embeddings, client,
             review_mode, focus_mode, pass_type,
             use_tfidf=use_tfidf, vocab=vocab
         )
-        
+
         all_findings.extend(findings)
         all_raw_outputs.append(raw_output)
-        
+
         # Collect unique retrieved chunks
         for chunk in retrieved:
             if chunk.chunk_id not in seen_chunk_ids:
                 all_retrieved.append(chunk)
                 seen_chunk_ids.add(chunk.chunk_id)
-    
+
     # Normalize and deduplicate
     normalized = normalize_findings(all_findings)
     deduped = deduplicate_findings(normalized)
-    
+
     # Limit to max issues
     max_issues = mode_config['max_issues']
     final_findings = sort_findings(deduped, 'priority')[:max_issues]
-    
+
     return final_findings, all_retrieved, all_raw_outputs
 
 # ============================================================================
@@ -1732,53 +1979,54 @@ def analyze_document(
     """Full document analysis pipeline with TF-IDF fallback."""
     if not chunks:
         return [], [], []
-    
+
     st.session_state.analysis_steps = []
     use_tfidf = False
     vocab = None
     chunk_embeddings = np.array([])
-    
+
     # Step 1: Try OpenAI embeddings, fall back to TF-IDF
     with progress_container:
         st.markdown("**Step 1/4**: Generating embeddings...")
-    
+
     chunk_texts = [c.text for c in chunks]
     chunk_embeddings, success = get_embeddings_batch(chunk_texts, client)
-    
+
     if not success or chunk_embeddings.size == 0:
         # Fall back to TF-IDF
         with progress_container:
-            st.markdown("**Step 1/4**: Using TF-IDF retrieval (embedding API unavailable)...")
-        
+            st.info("Using TF-IDF retrieval (embedding API unavailable)")
+
         use_tfidf = True
         chunk_embeddings, vocab = build_tfidf_vectors(chunk_texts)
-        
+
         if chunk_embeddings.size == 0:
             st.warning("Using basic retrieval - limited evidence matching")
             chunk_embeddings = np.array([])
-    
+
     st.session_state.chunk_embeddings = chunk_embeddings
     st.session_state.use_tfidf = use_tfidf
-    
+    st.session_state.tfidf_vocab = vocab
+
     # Step 2: Retrieve evidence
     with progress_container:
         retrieval_method = "TF-IDF" if use_tfidf else "semantic"
         st.markdown(f"**Step 2/4**: Retrieving relevant evidence ({retrieval_method})...")
-    
+
     # Step 3: Multi-pass analysis
     with progress_container:
         st.markdown("**Step 3/4**: Running multi-pass analysis...")
-    
+
     findings, retrieved, raw_outputs = run_multi_pass_analysis(
         chunks, chunk_embeddings, client,
         review_mode, focus_mode, progress_container,
         use_tfidf=use_tfidf, vocab=vocab
     )
-    
+
     # Step 4: Finalize
     with progress_container:
         st.markdown("**Step 4/4**: Finalizing results...")
-    
+
     return findings, retrieved, raw_outputs
 
 # ============================================================================
@@ -1790,25 +2038,45 @@ def generate_review_summary(
     document: DocumentSnapshot
 ) -> ReviewSummary:
     """Generate executive summary of review results."""
-    
+
     # Count by severity
     high_count = len([f for f in findings if f.severity == Severity.HIGH.value])
     medium_count = len([f for f in findings if f.severity == Severity.MEDIUM.value])
     low_count = len([f for f in findings if f.severity == Severity.LOW.value])
-    
+
     # Count by priority
     critical_count = len([f for f in findings if f.priority == Priority.CRITICAL.value])
-    
+
     # Count by discipline
     discipline_counts = {}
     for f in findings:
         discipline_counts[f.discipline] = discipline_counts.get(f.discipline, 0) + 1
-    
-    # Top issues and actions
+
+    # Count by type for better insights
+    type_counts = {}
+    for f in findings:
+        type_counts[f.type] = type_counts.get(f.type, 0) + 1
+
+    # Sort findings by priority and then severity
     sorted_findings = sort_findings(findings, 'priority')
-    top_issues = [f.title for f in sorted_findings[:5]]
-    top_actions = [f.recommended_action for f in sorted_findings[:5] if f.recommended_action]
-    
+
+    # Get top issues - prefer critical and high severity
+    top_issues = []
+    for f in sorted_findings:
+        if len(top_issues) >= 5:
+            break
+        # Only include high-confidence findings in top issues
+        if f.confidence in ['high', 'medium']:
+            top_issues.append(f.title)
+
+    # Get actionable recommendations
+    top_actions = []
+    for f in sorted_findings:
+        if len(top_actions) >= 5:
+            break
+        if f.recommended_action and len(f.recommended_action) > 20:
+            top_actions.append(f.recommended_action)
+
     return ReviewSummary(
         document=document,
         total_findings=len(findings),
@@ -1853,7 +2121,7 @@ def export_csv(findings: List[Finding]) -> str:
     """Export findings as CSV."""
     if not findings:
         return "No findings to export"
-    
+
     rows = []
     for f in findings:
         rows.append({
@@ -1869,7 +2137,7 @@ def export_csv(findings: List[Finding]) -> str:
             'Evidence': f.evidence,
             'Recommended Action': f.recommended_action
         })
-    
+
     df = pd.DataFrame(rows)
     return df.to_csv(index=False)
 
@@ -1900,17 +2168,17 @@ def export_markdown(findings: List[Finding], summary: ReviewSummary) -> str:
 """
     for disc, count in summary.discipline_counts.items():
         md += f"- **{disc.title()}**: {count} findings\n"
-    
+
     md += "\n### Top Critical Issues\n"
-    for issue in summary.top_issues[:5]:
-        md += f"1. {issue}\n"
-    
+    for i, issue in enumerate(summary.top_issues[:5], 1):
+        md += f"{i}. {issue}\n"
+
     md += "\n### Top Recommended Actions\n"
-    for action in summary.top_actions[:5]:
-        md += f"1. {action}\n"
-    
+    for i, action in enumerate(summary.top_actions[:5], 1):
+        md += f"{i}. {action}\n"
+
     md += "\n---\n\n## Detailed Findings\n\n"
-    
+
     for i, f in enumerate(findings, 1):
         md += f"""### {i}. {f.title}
 
@@ -1933,7 +2201,7 @@ def export_markdown(findings: List[Finding], summary: ReviewSummary) -> str:
 ---
 
 """
-    
+
     md += f"""
 ## About This Report
 
@@ -2014,7 +2282,7 @@ def render_sidebar():
     """Render sidebar with settings and information."""
     with st.sidebar:
         st.markdown("## ⚙️ Review Settings")
-        
+
         # Review mode
         st.markdown("### Review Depth")
         review_mode = st.radio(
@@ -2026,9 +2294,9 @@ def render_sidebar():
         st.session_state.review_mode = review_mode
         mode_info = REVIEW_MODES[review_mode]
         st.caption(f"{mode_info['description']} ({mode_info['passes']} pass{'es' if mode_info['passes'] > 1 else ''})")
-        
+
         st.markdown("---")
-        
+
         # Focus mode
         st.markdown("### Review Focus")
         focus_mode = st.radio(
@@ -2039,9 +2307,9 @@ def render_sidebar():
         )
         st.session_state.focus_mode = focus_mode
         st.caption(FOCUS_MODES[focus_mode]['description'])
-        
+
         st.markdown("---")
-        
+
         # Debug mode
         st.markdown("### Developer Options")
         st.session_state.debug_mode = st.toggle(
@@ -2049,9 +2317,9 @@ def render_sidebar():
             value=st.session_state.debug_mode,
             help="Show raw outputs and retrieved evidence"
         )
-        
+
         st.markdown("---")
-        
+
         # What we check
         st.markdown("### 🔎 Issue Types")
         st.markdown("""
@@ -2061,9 +2329,9 @@ def render_sidebar():
         - **Unclear Requirements** — Ambiguity
         - **Coordination Risks** — Cross-discipline
         """)
-        
+
         st.markdown("---")
-        
+
         # Quick start
         st.markdown("### 🚀 Quick Start")
         st.markdown("""
@@ -2073,7 +2341,7 @@ def render_sidebar():
         4. Review & filter findings
         5. Export report
         """)
-        
+
         st.markdown("---")
         st.caption(f"{APP_NAME} v{APP_VERSION}")
 
@@ -2084,15 +2352,15 @@ def render_empty_state():
         <div class="empty-state-icon">📄</div>
         <div class="empty-state-title">Upload a Construction Document</div>
         <div class="empty-state-description">
-            Upload technical PDFs such as mechanical specifications, electrical designs, 
-            structural plans, or construction specs. BuildSpec AI will identify QA/QC 
+            Upload technical PDFs such as mechanical specifications, electrical designs,
+            structural plans, or construction specs. BuildSpec AI will identify QA/QC
             issues with page-cited evidence.
         </div>
     </div>
     """, unsafe_allow_html=True)
-    
+
     st.markdown("")
-    
+
     col1, col2, col3 = st.columns(3)
     with col1:
         st.markdown("#### 🔴 Compliance")
@@ -2137,7 +2405,7 @@ def render_document_snapshot(snapshot: DocumentSnapshot):
         </div>
     </div>
     """, unsafe_allow_html=True)
-    
+
     # Show detected sections in expander
     if snapshot.detected_sections and st.session_state.debug_mode:
         with st.expander("📑 Detected Sections"):
@@ -2151,9 +2419,9 @@ def render_metrics(findings: List[Finding]):
     medium = len([f for f in findings if f.severity == Severity.MEDIUM.value])
     low = len([f for f in findings if f.severity == Severity.LOW.value])
     critical = len([f for f in findings if f.priority == Priority.CRITICAL.value])
-    
+
     col1, col2, col3, col4, col5 = st.columns(5)
-    
+
     with col1:
         st.markdown(f"""
         <div class="metric-card metric-total">
@@ -2161,7 +2429,7 @@ def render_metrics(findings: List[Finding]):
             <div class="metric-label">Total</div>
         </div>
         """, unsafe_allow_html=True)
-    
+
     with col2:
         st.markdown(f"""
         <div class="metric-card metric-critical">
@@ -2169,7 +2437,7 @@ def render_metrics(findings: List[Finding]):
             <div class="metric-label">Critical</div>
         </div>
         """, unsafe_allow_html=True)
-    
+
     with col3:
         st.markdown(f"""
         <div class="metric-card metric-high">
@@ -2177,7 +2445,7 @@ def render_metrics(findings: List[Finding]):
             <div class="metric-label">High</div>
         </div>
         """, unsafe_allow_html=True)
-    
+
     with col4:
         st.markdown(f"""
         <div class="metric-card metric-medium">
@@ -2185,7 +2453,7 @@ def render_metrics(findings: List[Finding]):
             <div class="metric-label">Medium</div>
         </div>
         """, unsafe_allow_html=True)
-    
+
     with col5:
         st.markdown(f"""
         <div class="metric-card metric-low">
@@ -2199,47 +2467,48 @@ def render_discipline_summary(findings: List[Finding]):
     counts = {}
     for f in findings:
         counts[f.discipline] = counts.get(f.discipline, 0) + 1
-    
+
     if not counts:
         return
-    
+
     items_html = ""
     for disc, count in sorted(counts.items(), key=lambda x: -x[1]):
         items_html += f'<span class="discipline-item"><span class="discipline-count">{count}</span><span class="discipline-name">{disc.title()}</span></span>'
-    
+
     st.markdown(f"""
     <div class="discipline-bar">{items_html}</div>
     """, unsafe_allow_html=True)
 
 def render_filters(findings: List[Finding]) -> Tuple[List[Finding], str]:
     """Render filters and return filtered findings."""
+    st.markdown("### Filter & Browse Findings")
+
     col1, col2, col3, col4, col5 = st.columns([2, 1, 1, 1, 1])
-    
+
     types = sorted(set(f.type for f in findings))
     severities = [s.value for s in Severity]
     priorities = [p.value for p in Priority]
     disciplines = sorted(set(f.discipline for f in findings))
-    
+
     with col1:
-        search = st.text_input("🔍 Search", placeholder="Search findings...", label_visibility="collapsed")
-    
+        search = st.text_input("🔍 Search findings", placeholder="Search by title or description...")
+
     with col2:
-        selected_types = st.multiselect("Type", types, default=types, label_visibility="collapsed")
-    
+        selected_types = st.multiselect("Type", types, default=types)
+
     with col3:
-        selected_severities = st.multiselect("Severity", severities, default=severities, label_visibility="collapsed")
-    
+        selected_severities = st.multiselect("Severity", severities, default=severities)
+
     with col4:
-        selected_priorities = st.multiselect("Priority", priorities, default=priorities, label_visibility="collapsed")
-    
+        selected_priorities = st.multiselect("Priority", priorities, default=priorities)
+
     with col5:
         group_by = st.selectbox(
             "Group by",
             ["severity", "priority", "discipline", "page", "type"],
-            index=0,
-            label_visibility="collapsed"
+            index=0
         )
-    
+
     # Apply filters
     filtered = []
     for f in findings:
@@ -2252,7 +2521,7 @@ def render_filters(findings: List[Finding]) -> Tuple[List[Finding], str]:
         if search and search.lower() not in f.title.lower() and search.lower() not in f.description.lower():
             continue
         filtered.append(f)
-    
+
     return sort_findings(filtered, group_by), group_by
 
 def render_findings_table(findings: List[Finding]):
@@ -2260,7 +2529,7 @@ def render_findings_table(findings: List[Finding]):
     if not findings:
         st.info("No findings match the selected filters.")
         return
-    
+
     rows = []
     for f in findings:
         rows.append({
@@ -2272,7 +2541,7 @@ def render_findings_table(findings: List[Finding]):
             'Discipline': f.discipline.title(),
             'Page': f.page
         })
-    
+
     df = pd.DataFrame(rows)
     st.dataframe(df, use_container_width=True, hide_index=True)
 
@@ -2280,10 +2549,10 @@ def render_finding_card(finding: Finding):
     """Render a single finding card."""
     severity_class = finding.severity
     priority_class = f"critical-priority" if finding.priority == Priority.CRITICAL.value else ""
-    
+
     severity_badge = f"badge-severity-{finding.severity}"
     priority_badge = f"badge-priority-{finding.priority}"
-    
+
     st.markdown(f"""
     <div class="finding-card {severity_class} {priority_class}">
         <div class="finding-header">
@@ -2343,20 +2612,20 @@ def render_summary_tab(summary: ReviewSummary):
         </div>
     </div>
     """, unsafe_allow_html=True)
-    
+
     # Discipline breakdown
     st.markdown("#### Discipline Breakdown")
     cols = st.columns(4)
     for i, (disc, count) in enumerate(summary.discipline_counts.items()):
         with cols[i % 4]:
             st.metric(disc.title(), count)
-    
+
     # Top issues
     if summary.top_issues:
         st.markdown("#### 🔴 Top Critical Issues")
         for i, issue in enumerate(summary.top_issues, 1):
             st.markdown(f"{i}. {issue}")
-    
+
     # Top actions
     if summary.top_actions:
         st.markdown("#### ✅ Top Recommended Actions")
@@ -2368,9 +2637,9 @@ def render_evidence_tab(retrieved_chunks: List[ChunkData]):
     if not retrieved_chunks:
         st.info("No evidence chunks available.")
         return
-    
+
     st.markdown(f"**{len(retrieved_chunks)} chunks retrieved** for analysis")
-    
+
     # Group by page
     by_page = {}
     for chunk in retrieved_chunks:
@@ -2378,7 +2647,7 @@ def render_evidence_tab(retrieved_chunks: List[ChunkData]):
         if page not in by_page:
             by_page[page] = []
         by_page[page].append(chunk)
-    
+
     for page in sorted(by_page.keys()):
         chunks = by_page[page]
         with st.expander(f"📄 Page {page} ({len(chunks)} chunks)"):
@@ -2396,12 +2665,12 @@ def render_evidence_tab(retrieved_chunks: List[ChunkData]):
 def render_export_tab(findings: List[Finding], summary: ReviewSummary):
     """Render the export tab content."""
     st.markdown("### Export Options")
-    
+
     col1, col2 = st.columns(2)
-    
+
     with col1:
         st.markdown("#### Structured Data")
-        
+
         json_data = export_json(findings, summary)
         st.download_button(
             "📋 Download JSON",
@@ -2410,7 +2679,7 @@ def render_export_tab(findings: List[Finding], summary: ReviewSummary):
             mime="application/json",
             use_container_width=True
         )
-        
+
         csv_data = export_csv(findings)
         st.download_button(
             "📊 Download CSV",
@@ -2419,10 +2688,10 @@ def render_export_tab(findings: List[Finding], summary: ReviewSummary):
             mime="text/csv",
             use_container_width=True
         )
-    
+
     with col2:
         st.markdown("#### Reports")
-        
+
         md_data = export_markdown(findings, summary)
         st.download_button(
             "📝 Download Markdown",
@@ -2431,7 +2700,7 @@ def render_export_tab(findings: List[Finding], summary: ReviewSummary):
             mime="text/markdown",
             use_container_width=True
         )
-        
+
         txt_data = export_txt(findings, summary)
         st.download_button(
             "📄 Download TXT",
@@ -2442,18 +2711,22 @@ def render_export_tab(findings: List[Finding], summary: ReviewSummary):
         )
 
 def render_debug_tab(raw_outputs: List[str], chunks: List[ChunkData]):
-    """Render debug tab content."""
+    """Render debug tab content (safe mode)."""
     st.markdown("### Debug Information")
-    
+
+    st.warning("Debug mode is for development only. Do not share raw outputs publicly.")
+
     # Raw outputs
     for i, output in enumerate(raw_outputs):
         with st.expander(f"📤 Raw Output - Pass {i+1}"):
-            st.code(output or "No output", language="json")
-    
+            # Truncate for safety
+            display_output = output[:2000] + "..." if len(output) > 2000 else output
+            st.code(display_output or "No output", language="json")
+
     # Chunk info
-    with st.expander(f"📑 All Chunks ({len(chunks)})"):
+    with st.expander(f"📑 Chunk Sample ({min(50, len(chunks))} of {len(chunks)})"):
         chunk_data = []
-        for c in chunks[:100]:
+        for c in chunks[:50]:
             chunk_data.append({
                 'ID': c.chunk_id,
                 'Page': c.page_number,
@@ -2466,8 +2739,9 @@ def render_footer():
     """Render footer."""
     st.markdown(f"""
     <div class="footer">
-        <p><strong>{APP_NAME}</strong> • {APP_TAGLINE}</p>
+        <p><strong>{APP_NAME} v{APP_VERSION}</strong> • {APP_TAGLINE}</p>
         <p>Built with Streamlit • Powered by OpenAI GPT-4o-mini • RAG-Enabled Multi-Pass Analysis</p>
+        <p style="margin-top: 0.5rem;">This automated review should be verified by qualified engineering professionals</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -2479,69 +2753,71 @@ def main():
     """Main application entry point."""
     # Inject CSS
     inject_custom_css()
-    
+
     # Check API key
     client = get_openai_client()
     if not client:
         st.error("⚠️ OpenAI API key not found. Set OPENAI_API_KEY in .env or Streamlit secrets.")
+        st.info("Get your API key at: https://platform.openai.com/api-keys")
         st.stop()
-    
+
     # Render sidebar and hero
     render_sidebar()
     render_hero()
-    
+
     # File upload
     st.markdown("### 📁 Document Upload")
-    
+
     uploaded_file = st.file_uploader(
         "Upload a construction engineering PDF",
         type=['pdf'],
         help="Technical specifications, engineering documents, construction plans"
     )
-    
+
     if uploaded_file is None:
         render_empty_state()
         render_footer()
         return
-    
+
     # Check for file change
     file_content = uploaded_file.getvalue()
     file_hash = get_file_hash(file_content)
-    
+
     if st.session_state.current_file_hash != file_hash:
         # New file - extract and process
         st.session_state.current_file = uploaded_file.name
         st.session_state.current_file_hash = file_hash
         st.session_state.analysis_complete = False
         st.session_state.findings = []
-        
+
         with st.spinner("Extracting document..."):
             pages, sections = extract_pdf_pages(uploaded_file)
             chunks = chunk_pages(pages)
-        
+
         st.session_state.pages = pages
         st.session_state.sections = sections
         st.session_state.chunks = chunks
-    
+
     pages = st.session_state.pages
     sections = st.session_state.sections
     chunks = st.session_state.chunks
-    
+
     # Validate extraction
     if not pages:
         st.error("Could not extract text from this PDF. It may be scanned or image-based.")
+        st.info("💡 Tip: This tool requires text-based PDFs. Scanned documents need OCR preprocessing.")
         return
-    
+
     if not chunks:
         st.error("No processable content found in the document.")
         return
-    
+
     # Create document snapshot
     total_chars = sum(p.char_count for p in pages)
     snapshot = DocumentSnapshot(
         filename=uploaded_file.name,
         file_size=format_file_size(len(file_content)),
-        total_pages=len(pages) + len([p for p in range(1, 100) if p not in [pg.page_number for pg in pages]]),
+        total_pages=len(pages),
         extracted_pages=len(pages),
         total_chars=total_chars,
         total_chunks=len(chunks),
@@ -2550,17 +2826,17 @@ def main():
         focus_mode=st.session_state.focus_mode
     )
     st.session_state.document_snapshot = snapshot
-    
+
     # Document warnings
     if len(pages) > 100:
-        st.warning(f"Large document ({len(pages)} pages). Deep Review may take longer.")
-    
+        st.warning(f"⏱️ Large document ({len(pages)} pages). Deep Review may take several minutes.")
+
     if total_chars > 400000:
-        st.warning("Document has significant content. Consider Standard or Quick Review for faster results.")
-    
+        st.info("💡 Document has significant content. Consider Standard or Quick Review for faster results.")
+
     # Render document snapshot
     render_document_snapshot(snapshot)
-    
+
     # Analysis button
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
@@ -2570,69 +2846,66 @@ def main():
             use_container_width=True,
             disabled=st.session_state.analysis_in_progress
         )
-    
+
     # Run analysis
     if run_analysis and not st.session_state.analysis_in_progress:
         st.session_state.analysis_in_progress = True
         st.session_state.error_message = None
-        
+
         progress_container = st.empty()
-        
+
         try:
             with progress_container.container():
                 st.markdown("### 🔄 Analysis Pipeline")
-            
+
             findings, retrieved, raw_outputs = analyze_document(
                 chunks, client,
                 st.session_state.review_mode,
                 st.session_state.focus_mode,
                 progress_container
             )
-            
+
             st.session_state.findings = findings
             st.session_state.retrieved_chunks = retrieved
             st.session_state.raw_model_outputs = raw_outputs
             st.session_state.analysis_complete = True
-            
+
             progress_container.empty()
-            
+
             if findings:
                 st.success(f"✅ Analysis complete! Found {len(findings)} issues.")
             else:
                 st.info("✅ Analysis complete. No significant issues identified.")
-                
+
         except Exception as e:
             st.session_state.error_message = str(e)
-            st.error(f"Analysis failed: {str(e)}")
+            error_display = str(e)[:500]  # Limit error message length
+            st.error(f"⚠️ Analysis failed: {error_display}")
+            if st.session_state.debug_mode:
+                st.exception(e)
         finally:
             st.session_state.analysis_in_progress = False
-    
+
     # Display results
     if st.session_state.analysis_complete:
         findings = st.session_state.findings
         retrieved = st.session_state.retrieved_chunks
         raw_outputs = st.session_state.raw_model_outputs
-        
+
         if findings:
             # Generate summary
             summary = generate_review_summary(findings, snapshot)
-            
+
             st.markdown("---")
-            
+
             # Metrics
             render_metrics(findings)
+            st.markdown("")
             render_discipline_summary(findings)
-            
+
             st.markdown("---")
-            
+
             # Tabs
-            tab_findings, tab_summary, tab_evidence, tab_export = st.tabs([
-                "📋 Findings",
-                "📊 Summary", 
-                "🔍 Evidence",
-                "📥 Export"
-            ])
-            
             if st.session_state.debug_mode:
                 tabs = st.tabs(["📋 Findings", "📊 Summary", "🔍 Evidence", "📥 Export", "🔧 Debug"])
                 tab_findings, tab_summary, tab_evidence, tab_export, tab_debug = tabs
@@ -2640,52 +2913,56 @@ def main():
                 tab_findings, tab_summary, tab_evidence, tab_export = st.tabs([
                     "📋 Findings", "📊 Summary", "🔍 Evidence", "📥 Export"
                 ])
-            
+
             with tab_findings:
-                st.markdown("### Filter & Browse Findings")
                 filtered_findings, group_by = render_filters(findings)
-                
+
                 st.markdown(f"**Showing {len(filtered_findings)} of {len(findings)} findings** (grouped by {group_by})")
-                
+
                 view_mode = st.radio(
-                    "View mode",
+                    "View mode:",
                     ["Cards", "Table"],
-                    horizontal=True,
-                    label_visibility="collapsed"
+                    horizontal=True
                 )
-                
+
+                st.markdown("")
+
                 if view_mode == "Cards":
                     for f in filtered_findings:
                         render_finding_card(f)
                 else:
                     render_findings_table(filtered_findings)
-            
+
             with tab_summary:
                 render_summary_tab(summary)
-            
+
             with tab_evidence:
                 render_evidence_tab(retrieved)
-            
+
             with tab_export:
                 render_export_tab(findings, summary)
-            
+
             if st.session_state.debug_mode:
                 with tab_debug:
                     render_debug_tab(raw_outputs, chunks)
-        
+
         else:
             # No findings state
             st.markdown("""
             <div class="card">
                 <div class="card-title">✅ No Significant Issues Found</div>
-                <p style="color: #94a3b8;">
+                <p style="color: #94a3b8; margin-top: 0.75rem; line-height: 1.6;">
                     The analysis did not identify significant QA/QC issues in this document.
-                    This could indicate a well-structured document, or you may want to try 
+                    This could indicate a well-structured document, or you may want to try
                     a deeper review mode or different focus area.
                 </p>
             </div>
             """, unsafe_allow_html=True)
-    
+
+            # Still show evidence tab
+            with st.expander("🔍 View Retrieved Evidence"):
+                render_evidence_tab(retrieved)
+
     render_footer()
 
 # ============================================================================

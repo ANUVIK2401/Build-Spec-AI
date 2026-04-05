@@ -1,14 +1,25 @@
-# Environment variables
-.env
+# BuildSpec AI - Git Ignore
+# Files that should NEVER be committed to version control
 
-# Development prompt files - keep out of public repo
+# ============================================================================
+# SECURITY: Environment Variables & Secrets
+# ============================================================================
+.env
+.streamlit/secrets.toml
+
+# ============================================================================
+# DEVELOPMENT: Internal Prompts & Context
+# ============================================================================
 cursor_prompt.md
 claude.md
-quick_start_steps.md
 buildspec_cursor_prompt.md
 buildspec_claude.md
+quick_start_steps.md
+CLAUDE.md
 
-# Python
+# ============================================================================
+# PYTHON: Artifacts & Cache
+# ============================================================================
 __pycache__/
 *.py[cod]
 *$py.class
@@ -26,36 +37,74 @@ parts/
 sdist/
 var/
 wheels/
+pip-wheel-metadata/
+share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+MANIFEST
 
-# Virtual environments
+# ============================================================================
+# VIRTUAL ENVIRONMENTS
+# ============================================================================
 venv/
 ENV/
 env/
-.venv/
+.venv
+env.bak/
+venv.bak/
 
-# IDE
-.idea/
+# ============================================================================
+# IDE & EDITORS
+# ============================================================================
 .vscode/
+.idea/
 *.swp
 *.swo
+*.swn
 *~
-
-# OS
 .DS_Store
 Thumbs.db
 
-# Streamlit
-.streamlit/secrets.toml
-
-# Temporary files
-*.tmp
-*.temp
+# ============================================================================
+# TEMPORARY FILES
+# ============================================================================
+*.pdf
 temp/
 tmp/
-
-# Logs
+*.tmp
 *.log
-logs/
+
+# ============================================================================
+# JUPYTER NOTEBOOKS
+# ============================================================================
+.ipynb_checkpoints
+*.ipynb
+
+# ============================================================================
+# TESTING
+# ============================================================================
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# ============================================================================
+# DEPLOYMENT
+# ============================================================================
+.streamlit/config.toml
+*.pkl
+*.pickle
+*.joblib
+
+# ============================================================================
+# OS SPECIFIC
+# ============================================================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
