@@ -1011,11 +1011,99 @@ def chunk_pages(pages: List[PageData]) -> List[ChunkData]:
     return chunks
 
 # ============================================================================
-# EMBEDDINGS & RETRIEVAL
+# EMBEDDINGS & RETRIEVAL (with TF-IDF fallback)
 # ============================================================================
 
-def get_embeddings_batch(texts: List[str], client: OpenAI, batch_size: int = 100) -> np.ndarray:
-    """Generate embeddings in batches for efficiency."""
+def check_embedding_access(client: OpenAI) -> bool:
+    """Check if the API key has access to embedding models."""
+    try:
+        response = client.embeddings.create(
+            model=EMBEDDING_MODEL,
+            input=["test"]
+        )
+        return True
+    except Exception:
+        return False
+
+def build_tfidf_vectors(texts: List[str]) -> Tuple[np.ndarray, Dict[str, int]]:
+    """
+    Build simple TF-IDF vectors for text similarity.
+    This is a fallback when OpenAI embeddings are not available.
+    """
+    # Build vocabulary
+    vocab = {}
+    for text in texts:
+        words = re.findall(r'\b[a-z]{2,}\b', text.lower())
+        for word in words:
+            if word not in vocab:
+                vocab[word] = len(vocab)
+    
+    if not vocab:
+        return np.array([]), vocab
+    
+    # Build document frequency
+    doc_freq = np.zeros(len(vocab))
+    for text in texts:
+        words = set(re.findall(r'\b[a-z]{2,}\b', text.lower()))
+        for word in words:
+            if word in vocab:
+                doc_freq[vocab[word]] += 1
+    
+    # Build TF-IDF vectors
+    n_docs = len(texts)
+    idf = np.log((n_docs + 1) / (doc_freq + 1)) + 1
+    
+    vectors = []
+    for text in texts:
+        words = re.findall(r'\b[a-z]{2,}\b', text.lower())
+        tf = np.zeros(len(vocab))
+        for word in words:
+            if word in vocab:
+                tf[vocab[word]] += 1
+        
+        # Normalize TF
+        if tf.sum() > 0:
+            tf = tf / tf.sum()
+        
+        # TF-IDF
+        tfidf = tf * idf
+        
+        # L2 normalize
+        norm = np.linalg.norm(tfidf)
+        if norm > 0:
+            tfidf = tfidf / norm
+        
+        vectors.append(tfidf)
+    
+    return np.array(vectors), vocab
+
+def get_tfidf_query_vector(query: str, vocab: Dict[str, int], n_docs: int, doc_freq: np.ndarray) -> np.ndarray:
+    """Get TF-IDF vector for a query."""
+    words = re.findall(r'\b[a-z]{2,}\b', query.lower())
+    tf = np.zeros(len(vocab))
+    
+    for word in words:
+        if word in vocab:
+            tf[vocab[word]] += 1
+    
+    if tf.sum() > 0:
+        tf = tf / tf.sum()
+    
+    idf = np.log((n_docs + 1) / (doc_freq + 1)) + 1
+    tfidf = tf * idf
+    
+    norm = np.linalg.norm(tfidf)
+    if norm > 0:
+        tfidf = tfidf / norm
+    
+    return tfidf
+
+def get_embeddings_batch(texts: List[str], client: OpenAI, batch_size: int = 100) -> Tuple[np.ndarray, bool]:
+    """
+    Generate embeddings in batches for efficiency.
+    Returns (embeddings, success) tuple.
+    Falls back to TF-IDF if OpenAI embeddings fail.
+    """
     all_embeddings = []
     
     for i in range(0, len(texts), batch_size):
@@ -1028,10 +1116,10 @@ def get_embeddings_batch(texts: List[str], client: OpenAI, batch_size: int = 100
             batch_embeddings = [item.embedding for item in response.data]
             all_embeddings.extend(batch_embeddings)
         except Exception as e:
-            st.error(f"Error generating embeddings: {str(e)}")
-            return np.array([])
+            # Return empty to signal fallback needed
+            return np.array([]), False
     
-    return np.array(all_embeddings)
+    return np.array(all_embeddings), True
 
 def cosine_similarity_matrix(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     """Compute cosine similarity between vector sets."""
@@ -1039,20 +1127,67 @@ def cosine_similarity_matrix(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     b_norm = b / (np.linalg.norm(b, axis=1, keepdims=True) + 1e-10)
     return np.dot(a_norm, b_norm.T)
 
+def retrieve_chunks_tfidf(
+    query: str,
+    chunks: List[ChunkData],
+    chunk_vectors: np.ndarray,
+    vocab: Dict[str, int],
+    top_k: int = 10
+) -> List[ChunkData]:
+    """Retrieve chunks using TF-IDF similarity."""
+    if not chunks or chunk_vectors.size == 0:
+        return []
+    
+    # Build document frequency from chunk vectors
+    doc_freq = (chunk_vectors > 0).sum(axis=0)
+    
+    # Get query vector
+    query_vector = get_tfidf_query_vector(query, vocab, len(chunks), doc_freq)
+    
+    # Compute similarities
+    similarities = np.dot(chunk_vectors, query_vector)
+    top_indices = np.argsort(similarities)[::-1][:top_k]
+    
+    retrieved = []
+    for idx in top_indices:
+        chunk = ChunkData(
+            chunk_id=chunks[idx].chunk_id,
+            page_number=chunks[idx].page_number,
+            text=chunks[idx].text,
+            preview=chunks[idx].preview,
+            section=chunks[idx].section,
+            similarity=float(similarities[idx])
+        )
+        retrieved.append(chunk)
+    
+    return retrieved
+
 def retrieve_chunks(
     query: str,
     chunks: List[ChunkData],
     chunk_embeddings: np.ndarray,
     client: OpenAI,
-    top_k: int = 10
+    top_k: int = 10,
+    use_tfidf: bool = False,
+    vocab: Dict[str, int] = None
 ) -> List[ChunkData]:
     """Retrieve most relevant chunks for a query."""
-    if not chunks or chunk_embeddings.size == 0:
+    if not chunks:
         return []
     
-    query_embedding = get_embeddings_batch([query], client)
-    if query_embedding.size == 0:
-        return []
+    # Use TF-IDF if specified or if embeddings are empty
+    if use_tfidf or chunk_embeddings.size == 0:
+        if vocab is None:
+            return chunks[:top_k]  # Fallback to first chunks
+        return retrieve_chunks_tfidf(query, chunks, chunk_embeddings, vocab, top_k)
+    
+    # Use OpenAI embeddings
+    query_embedding, success = get_embeddings_batch([query], client)
+    if not success or query_embedding.size == 0:
+        # Fallback to TF-IDF
+        if vocab:
+            return retrieve_chunks_tfidf(query, chunks, chunk_embeddings, vocab, top_k)
+        return chunks[:top_k]
     
     similarities = cosine_similarity_matrix(query_embedding, chunk_embeddings)[0]
     top_indices = np.argsort(similarities)[::-1][:top_k]
@@ -1076,7 +1211,9 @@ def retrieve_diverse_evidence(
     chunk_embeddings: np.ndarray,
     client: OpenAI,
     review_mode: str,
-    focus_mode: str
+    focus_mode: str,
+    use_tfidf: bool = False,
+    vocab: Dict[str, int] = None
 ) -> List[ChunkData]:
     """
     Retrieve diverse evidence using multiple queries.
@@ -1117,7 +1254,8 @@ def retrieve_diverse_evidence(
     
     for query in base_queries:
         retrieved = retrieve_chunks(
-            query, chunks, chunk_embeddings, client, top_k=chunks_per_query
+            query, chunks, chunk_embeddings, client, top_k=chunks_per_query,
+            use_tfidf=use_tfidf, vocab=vocab
         )
         for chunk in retrieved:
             if chunk.chunk_id not in seen_ids:
@@ -1479,6 +1617,8 @@ def run_analysis_pass(
     review_mode: str,
     focus_mode: str,
     pass_type: str,
+    use_tfidf: bool = False,
+    vocab: Dict[str, int] = None,
     progress_callback=None
 ) -> Tuple[List[Dict], List[ChunkData], str]:
     """Run a single analysis pass."""
@@ -1491,11 +1631,13 @@ def run_analysis_pass(
     if query:
         retrieved = retrieve_chunks(
             query, chunks, chunk_embeddings, client,
-            top_k=mode_config['top_k'] // 2
+            top_k=mode_config['top_k'] // 2,
+            use_tfidf=use_tfidf, vocab=vocab
         )
     else:
         retrieved = retrieve_diverse_evidence(
-            chunks, chunk_embeddings, client, review_mode, focus_mode
+            chunks, chunk_embeddings, client, review_mode, focus_mode,
+            use_tfidf=use_tfidf, vocab=vocab
         )
     
     if not retrieved:
@@ -1530,7 +1672,9 @@ def run_multi_pass_analysis(
     client: OpenAI,
     review_mode: str,
     focus_mode: str,
-    progress_container
+    progress_container,
+    use_tfidf: bool = False,
+    vocab: Dict[str, int] = None
 ) -> Tuple[List[Finding], List[ChunkData], List[str]]:
     """Run multi-pass analysis pipeline."""
     mode_config = REVIEW_MODES[review_mode]
@@ -1551,7 +1695,8 @@ def run_multi_pass_analysis(
         
         findings, retrieved, raw_output = run_analysis_pass(
             chunks, chunk_embeddings, client,
-            review_mode, focus_mode, pass_type
+            review_mode, focus_mode, pass_type,
+            use_tfidf=use_tfidf, vocab=vocab
         )
         
         all_findings.extend(findings)
@@ -1584,28 +1729,41 @@ def analyze_document(
     focus_mode: str,
     progress_container
 ) -> Tuple[List[Finding], List[ChunkData], List[str]]:
-    """Full document analysis pipeline."""
+    """Full document analysis pipeline with TF-IDF fallback."""
     if not chunks:
         return [], [], []
     
     st.session_state.analysis_steps = []
+    use_tfidf = False
+    vocab = None
+    chunk_embeddings = np.array([])
     
-    # Step 1: Generate embeddings
+    # Step 1: Try OpenAI embeddings, fall back to TF-IDF
     with progress_container:
         st.markdown("**Step 1/4**: Generating embeddings...")
     
     chunk_texts = [c.text for c in chunks]
-    chunk_embeddings = get_embeddings_batch(chunk_texts, client)
+    chunk_embeddings, success = get_embeddings_batch(chunk_texts, client)
     
-    if chunk_embeddings.size == 0:
-        st.error("Failed to generate embeddings")
-        return [], [], []
+    if not success or chunk_embeddings.size == 0:
+        # Fall back to TF-IDF
+        with progress_container:
+            st.markdown("**Step 1/4**: Using TF-IDF retrieval (embedding API unavailable)...")
+        
+        use_tfidf = True
+        chunk_embeddings, vocab = build_tfidf_vectors(chunk_texts)
+        
+        if chunk_embeddings.size == 0:
+            st.warning("Using basic retrieval - limited evidence matching")
+            chunk_embeddings = np.array([])
     
     st.session_state.chunk_embeddings = chunk_embeddings
+    st.session_state.use_tfidf = use_tfidf
     
     # Step 2: Retrieve evidence
     with progress_container:
-        st.markdown("**Step 2/4**: Retrieving relevant evidence...")
+        retrieval_method = "TF-IDF" if use_tfidf else "semantic"
+        st.markdown(f"**Step 2/4**: Retrieving relevant evidence ({retrieval_method})...")
     
     # Step 3: Multi-pass analysis
     with progress_container:
@@ -1613,7 +1771,8 @@ def analyze_document(
     
     findings, retrieved, raw_outputs = run_multi_pass_analysis(
         chunks, chunk_embeddings, client,
-        review_mode, focus_mode, progress_container
+        review_mode, focus_mode, progress_container,
+        use_tfidf=use_tfidf, vocab=vocab
     )
     
     # Step 4: Finalize
