@@ -69,7 +69,9 @@ Thumbs.db
 # ============================================================================
 # TEMPORARY FILES
 # ============================================================================
+# Exclude PDFs but allow demo document
 *.pdf
+!demo/sample_construction_spec.pdf
 temp/
 tmp/
 *.tmp

@@ -49,9 +49,13 @@ load_dotenv()
 
 # App configuration
 APP_NAME = "BuildSpec AI"
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.2.0"
 APP_TAGLINE = "AI QA/QC Copilot for Construction Engineering Documents"
 APP_DESCRIPTION = "Review technical PDFs for compliance gaps, contradictions, missing sections, and coordination risks with page-cited RAG evidence."
+
+# Demo document configuration
+DEMO_PDF_PATH = "demo/sample_construction_spec.pdf"
+DEMO_PDF_NAME = "Sample Construction Specification (Demo)"
 
 # Model configuration
 EMBEDDING_MODEL = "text-embedding-3-small"  # Will fallback to TF-IDF if unavailable
@@ -823,6 +827,162 @@ def inject_custom_css():
     .stMultiSelect {
         margin-bottom: 0.5rem;
     }
+    
+    /* Executive Summary */
+    .executive-summary {
+        background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+        border: 1px solid #334155;
+        border-radius: 16px;
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+    }
+    
+    .executive-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1rem;
+        flex-wrap: wrap;
+        gap: 1rem;
+    }
+    
+    .executive-status {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.5rem 1rem;
+        background: rgba(255,255,255,0.05);
+        border-radius: 8px;
+        border-left: 4px solid;
+    }
+    
+    .executive-icon {
+        font-size: 1.5rem;
+    }
+    
+    .executive-status-text {
+        font-size: 1.1rem;
+        font-weight: 700;
+        color: #f8fafc;
+    }
+    
+    .executive-stats {
+        display: flex;
+        gap: 0.75rem;
+        color: #94a3b8;
+        font-size: 0.9rem;
+    }
+    
+    .executive-body {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1.5rem;
+    }
+    
+    @media (max-width: 768px) {
+        .executive-body {
+            grid-template-columns: 1fr;
+        }
+    }
+    
+    .executive-label {
+        font-size: 0.7rem;
+        color: #64748b;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 0.5rem;
+    }
+    
+    .executive-issues ol li {
+        font-size: 0.9rem;
+    }
+    
+    .executive-action {
+        background: rgba(34, 197, 94, 0.1);
+        border: 1px solid rgba(34, 197, 94, 0.2);
+        border-radius: 8px;
+        padding: 1rem;
+    }
+    
+    /* Improved Filter Row */
+    .filter-container {
+        background: #1e293b;
+        border: 1px solid #334155;
+        border-radius: 12px;
+        padding: 1rem;
+        margin-bottom: 1rem;
+    }
+    
+    .filter-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 0.75rem;
+    }
+    
+    .filter-title {
+        font-size: 0.9rem;
+        font-weight: 600;
+        color: #f8fafc;
+    }
+    
+    .filter-count {
+        font-size: 0.8rem;
+        color: #94a3b8;
+    }
+    
+    /* Success state for no findings */
+    .success-state {
+        background: linear-gradient(135deg, #064e3b 0%, #022c22 100%);
+        border: 1px solid #059669;
+        border-radius: 16px;
+        padding: 2rem;
+        text-align: center;
+        margin: 1rem 0;
+    }
+    
+    .success-icon {
+        font-size: 3rem;
+        margin-bottom: 1rem;
+    }
+    
+    .success-title {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: #6ee7b7;
+        margin-bottom: 0.5rem;
+    }
+    
+    .success-description {
+        color: #a7f3d0;
+        max-width: 500px;
+        margin: 0 auto;
+        line-height: 1.6;
+    }
+    
+    .success-stats {
+        display: flex;
+        justify-content: center;
+        gap: 2rem;
+        margin-top: 1.5rem;
+        flex-wrap: wrap;
+    }
+    
+    .success-stat {
+        text-align: center;
+    }
+    
+    .success-stat-value {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: #6ee7b7;
+    }
+    
+    .success-stat-label {
+        font-size: 0.75rem;
+        color: #94a3b8;
+        text-transform: uppercase;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -853,11 +1013,21 @@ def init_session_state():
         'error_message': None,
         'grouping_mode': 'severity',
         'use_tfidf': False,
-        'tfidf_vocab': None
+        'tfidf_vocab': None,
+        'demo_mode': False
     }
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
+
+
+def load_demo_document():
+    """Load the demo PDF document."""
+    demo_path = os.path.join(os.path.dirname(__file__), DEMO_PDF_PATH)
+    if os.path.exists(demo_path):
+        with open(demo_path, 'rb') as f:
+            return io.BytesIO(f.read())
+    return None
 
 init_session_state()
 
@@ -2346,21 +2516,35 @@ def render_sidebar():
         st.caption(f"{APP_NAME} v{APP_VERSION}")
 
 def render_empty_state():
-    """Render empty state before upload."""
+    """Render empty state before upload with demo option."""
     st.markdown("""
     <div class="empty-state">
         <div class="empty-state-icon">📄</div>
         <div class="empty-state-title">Upload a Construction Document</div>
         <div class="empty-state-description">
-            Upload technical PDFs such as mechanical specifications, electrical designs,
-            structural plans, or construction specs. BuildSpec AI will identify QA/QC
+            Upload technical PDFs such as mechanical specifications, electrical designs, 
+            structural plans, or construction specs. BuildSpec AI will identify QA/QC 
             issues with page-cited evidence.
         </div>
     </div>
     """, unsafe_allow_html=True)
-
+    
     st.markdown("")
-
+    
+    # Demo button
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        demo_path = os.path.join(os.path.dirname(__file__) if '__file__' in dir() else '.', DEMO_PDF_PATH)
+        if os.path.exists(demo_path):
+            if st.button("🎯 Try Demo Document", type="secondary", use_container_width=True):
+                st.session_state.demo_mode = True
+                st.rerun()
+            st.caption("Load a sample construction specification to see BuildSpec AI in action")
+    
+    st.markdown("")
+    st.markdown("---")
+    st.markdown("")
+    
     col1, col2, col3 = st.columns(3)
     with col1:
         st.markdown("#### 🔴 Compliance")
@@ -2412,6 +2596,68 @@ def render_document_snapshot(snapshot: DocumentSnapshot):
             for section in snapshot.detected_sections[:15]:
                 st.caption(f"• {section}")
 
+def render_executive_summary(findings: List[Finding], summary: ReviewSummary):
+    """Render executive summary block above findings."""
+    # Determine overall status
+    if summary.critical_priority > 0:
+        status_icon = "🔴"
+        status_text = "Critical Issues Found"
+        status_color = "#ef4444"
+    elif summary.high_severity > 0:
+        status_icon = "🟠"
+        status_text = "High Priority Issues"
+        status_color = "#f59e0b"
+    elif summary.total_findings > 0:
+        status_icon = "🟡"
+        status_text = "Issues Identified"
+        status_color = "#eab308"
+    else:
+        status_icon = "🟢"
+        status_text = "Document Looks Good"
+        status_color = "#22c55e"
+    
+    # Get top discipline
+    top_discipline = max(summary.discipline_counts.items(), key=lambda x: x[1])[0] if summary.discipline_counts else "general"
+    
+    # Get top issues (max 3)
+    top_issues_html = ""
+    for i, issue in enumerate(summary.top_issues[:3], 1):
+        top_issues_html += f'<li style="margin-bottom: 0.35rem;">{issue}</li>'
+    
+    # Get top action
+    top_action = summary.top_actions[0] if summary.top_actions else "Review findings and address by priority."
+    
+    st.markdown(f"""
+    <div class="executive-summary">
+        <div class="executive-header">
+            <div class="executive-status" style="border-color: {status_color};">
+                <span class="executive-icon">{status_icon}</span>
+                <span class="executive-status-text">{status_text}</span>
+            </div>
+            <div class="executive-stats">
+                <span><strong>{summary.total_findings}</strong> findings</span>
+                <span>•</span>
+                <span><strong>{summary.critical_priority}</strong> critical</span>
+                <span>•</span>
+                <span><strong>{top_discipline.title()}</strong> most affected</span>
+            </div>
+        </div>
+        <div class="executive-body">
+            <div class="executive-issues">
+                <div class="executive-label">Top Issues</div>
+                <ol style="margin: 0; padding-left: 1.25rem; color: #cbd5e1;">
+                    {top_issues_html if top_issues_html else '<li>No critical issues identified</li>'}
+                </ol>
+            </div>
+            <div class="executive-action">
+                <div class="executive-label">Priority Action</div>
+                <p style="margin: 0; color: #86efac; font-size: 0.9rem;">{top_action}</p>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
 def render_metrics(findings: List[Finding]):
     """Render metrics row."""
     total = len(findings)
@@ -2419,9 +2665,9 @@ def render_metrics(findings: List[Finding]):
     medium = len([f for f in findings if f.severity == Severity.MEDIUM.value])
     low = len([f for f in findings if f.severity == Severity.LOW.value])
     critical = len([f for f in findings if f.priority == Priority.CRITICAL.value])
-
+    
     col1, col2, col3, col4, col5 = st.columns(5)
-
+    
     with col1:
         st.markdown(f"""
         <div class="metric-card metric-total">
@@ -2429,7 +2675,7 @@ def render_metrics(findings: List[Finding]):
             <div class="metric-label">Total</div>
         </div>
         """, unsafe_allow_html=True)
-
+    
     with col2:
         st.markdown(f"""
         <div class="metric-card metric-critical">
@@ -2437,7 +2683,7 @@ def render_metrics(findings: List[Finding]):
             <div class="metric-label">Critical</div>
         </div>
         """, unsafe_allow_html=True)
-
+    
     with col3:
         st.markdown(f"""
         <div class="metric-card metric-high">
@@ -2445,7 +2691,7 @@ def render_metrics(findings: List[Finding]):
             <div class="metric-label">High</div>
         </div>
         """, unsafe_allow_html=True)
-
+    
     with col4:
         st.markdown(f"""
         <div class="metric-card metric-medium">
@@ -2453,7 +2699,7 @@ def render_metrics(findings: List[Finding]):
             <div class="metric-label">Medium</div>
         </div>
         """, unsafe_allow_html=True)
-
+    
     with col5:
         st.markdown(f"""
         <div class="metric-card metric-low">
@@ -2480,33 +2726,60 @@ def render_discipline_summary(findings: List[Finding]):
     """, unsafe_allow_html=True)
 
 def render_filters(findings: List[Finding]) -> Tuple[List[Finding], str]:
-    """Render filters and return filtered findings."""
-    st.markdown("### Filter & Browse Findings")
-
-    col1, col2, col3, col4, col5 = st.columns([2, 1, 1, 1, 1])
-
+    """Render filters and return filtered findings with improved UX."""
     types = sorted(set(f.type for f in findings))
     severities = [s.value for s in Severity]
     priorities = [p.value for p in Priority]
-    disciplines = sorted(set(f.discipline for f in findings))
-
+    
+    # Search row
+    col_search, col_reset = st.columns([4, 1])
+    with col_search:
+        search = st.text_input("🔍 Search findings", placeholder="Search by title or description...", label_visibility="collapsed")
+    with col_reset:
+        reset_clicked = st.button("↺ Reset", use_container_width=True)
+    
+    # Filter chips row
+    col1, col2, col3, col4 = st.columns(4)
+    
     with col1:
-        search = st.text_input("🔍 Search findings", placeholder="Search by title or description...")
-
+        if reset_clicked:
+            selected_types = types
+        else:
+            selected_types = st.multiselect(
+                "Type", 
+                types, 
+                default=types,
+                format_func=lambda x: x.replace('_', ' ').title()
+            )
+    
     with col2:
-        selected_types = st.multiselect("Type", types, default=types)
-
+        if reset_clicked:
+            selected_severities = severities
+        else:
+            selected_severities = st.multiselect(
+                "Severity", 
+                severities, 
+                default=severities,
+                format_func=lambda x: x.upper()
+            )
+    
     with col3:
-        selected_severities = st.multiselect("Severity", severities, default=severities)
-
+        if reset_clicked:
+            selected_priorities = priorities
+        else:
+            selected_priorities = st.multiselect(
+                "Priority", 
+                priorities, 
+                default=priorities,
+                format_func=lambda x: x.upper()
+            )
+    
     with col4:
-        selected_priorities = st.multiselect("Priority", priorities, default=priorities)
-
-    with col5:
         group_by = st.selectbox(
             "Group by",
             ["severity", "priority", "discipline", "page", "type"],
-            index=0
+            index=0,
+            format_func=lambda x: x.title()
         )
 
     # Apply filters
@@ -2765,33 +3038,58 @@ def main():
     render_sidebar()
     render_hero()
 
-    # File upload
+    # File upload section
     st.markdown("### 📁 Document Upload")
-
+    st.caption("Upload a construction engineering PDF")
+    
+    # Check for demo mode
+    demo_file = None
+    if st.session_state.demo_mode:
+        demo_path = os.path.join(os.path.dirname(__file__) if '__file__' in dir() else '.', DEMO_PDF_PATH)
+        if os.path.exists(demo_path):
+            with open(demo_path, 'rb') as f:
+                demo_file = io.BytesIO(f.read())
+            st.info(f"📄 **Demo Mode:** Using sample construction specification")
+            col1, col2 = st.columns([3, 1])
+            with col2:
+                if st.button("✕ Exit Demo", use_container_width=True):
+                    st.session_state.demo_mode = False
+                    st.session_state.current_file_hash = None
+                    st.session_state.analysis_complete = False
+                    st.rerun()
+    
     uploaded_file = st.file_uploader(
-        "Upload a construction engineering PDF",
+        "Upload PDF",
         type=['pdf'],
-        help="Technical specifications, engineering documents, construction plans"
+        help="Technical specifications, engineering documents, construction plans",
+        label_visibility="collapsed",
+        disabled=st.session_state.demo_mode
     )
+    
+    # Use demo file if in demo mode, otherwise use uploaded file
+    active_file = demo_file if st.session_state.demo_mode else uploaded_file
+    active_filename = DEMO_PDF_NAME if st.session_state.demo_mode else (uploaded_file.name if uploaded_file else None)
 
-    if uploaded_file is None:
+    if active_file is None:
         render_empty_state()
         render_footer()
         return
 
     # Check for file change
-    file_content = uploaded_file.getvalue()
+    file_content = active_file.getvalue() if hasattr(active_file, 'getvalue') else active_file.read()
+    if hasattr(active_file, 'seek'):
+        active_file.seek(0)
     file_hash = get_file_hash(file_content)
 
     if st.session_state.current_file_hash != file_hash:
         # New file - extract and process
-        st.session_state.current_file = uploaded_file.name
+        st.session_state.current_file = active_filename
         st.session_state.current_file_hash = file_hash
         st.session_state.analysis_complete = False
         st.session_state.findings = []
 
         with st.spinner("Extracting document..."):
-            pages, sections = extract_pdf_pages(uploaded_file)
+            pages, sections = extract_pdf_pages(active_file)
             chunks = chunk_pages(pages)
 
         st.session_state.pages = pages
@@ -2815,7 +3113,7 @@ def main():
     # Create document snapshot
     total_chars = sum(p.char_count for p in pages)
     snapshot = DocumentSnapshot(
-        filename=uploaded_file.name,
+        filename=active_filename,
         file_size=format_file_size(len(file_content)),
         total_pages=len(pages),
         extracted_pages=len(pages),
@@ -2897,6 +3195,9 @@ def main():
             summary = generate_review_summary(findings, snapshot)
 
             st.markdown("---")
+            
+            # Executive Summary Block (NEW)
+            render_executive_summary(findings, summary)
 
             # Metrics
             render_metrics(findings)
@@ -2947,17 +3248,34 @@ def main():
                     render_debug_tab(raw_outputs, chunks)
 
         else:
-            # No findings state
-            st.markdown("""
-            <div class="card">
-                <div class="card-title">✅ No Significant Issues Found</div>
-                <p style="color: #94a3b8; margin-top: 0.75rem; line-height: 1.6;">
-                    The analysis did not identify significant QA/QC issues in this document.
-                    This could indicate a well-structured document, or you may want to try
-                    a deeper review mode or different focus area.
-                </p>
+            # No findings success state - improved
+            st.markdown(f"""
+            <div class="success-state">
+                <div class="success-icon">✅</div>
+                <div class="success-title">Document Passes QA/QC Review</div>
+                <div class="success-description">
+                    The multi-pass analysis did not identify significant compliance gaps, 
+                    contradictions, or coordination risks in this document. The specification 
+                    appears to be well-structured and complete.
+                </div>
+                <div class="success-stats">
+                    <div class="success-stat">
+                        <div class="success-stat-value">{snapshot.extracted_pages}</div>
+                        <div class="success-stat-label">Pages Reviewed</div>
+                    </div>
+                    <div class="success-stat">
+                        <div class="success-stat-value">{snapshot.total_chunks}</div>
+                        <div class="success-stat-label">Sections Analyzed</div>
+                    </div>
+                    <div class="success-stat">
+                        <div class="success-stat-value">{len(retrieved)}</div>
+                        <div class="success-stat-label">Evidence Chunks</div>
+                    </div>
+                </div>
             </div>
             """, unsafe_allow_html=True)
+            
+            st.info("💡 **Tip:** Try a Deep Review or different Focus Mode for more thorough analysis.")
 
             # Still show evidence tab
             with st.expander("🔍 View Retrieved Evidence"):
