@@ -197,7 +197,7 @@ RecursiveCharacterTextSplitter
 ### 3. Embedding & Retrieval
 
 ```
-OpenAI text-embedding-3-small
+OpenAI text-embedding-ada-002
 ├── Batch processing (100 texts/batch)
 ├── Cosine similarity ranking
 ├── Multi-query retrieval:

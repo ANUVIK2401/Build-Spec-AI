@@ -52,7 +52,7 @@ APP_TAGLINE = "AI QA/QC Copilot for Construction Engineering Documents"
 APP_DESCRIPTION = "Review technical PDFs for compliance gaps, contradictions, missing sections, and coordination risks with page-cited RAG evidence."
 
 # Model configuration
-EMBEDDING_MODEL = "text-embedding-3-small"
+EMBEDDING_MODEL = "text-embedding-ada-002"  # Most widely available embedding model
 CHAT_MODEL = "gpt-4o-mini"
 CHAT_TEMPERATURE = 0.2
 CHAT_MAX_TOKENS = 4000
