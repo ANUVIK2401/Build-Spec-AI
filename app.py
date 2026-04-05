@@ -51,6 +51,12 @@ APP_VERSION = "2.0.0"
 APP_TAGLINE = "AI QA/QC Copilot for Construction Engineering Documents"
 APP_DESCRIPTION = "Review technical PDFs for compliance gaps, contradictions, missing sections, and coordination risks with page-cited RAG evidence."
 
+# Model configuration
+EMBEDDING_MODEL = "text-embedding-3-small"
+CHAT_MODEL = "gpt-4o-mini"
+CHAT_TEMPERATURE = 0.2
+CHAT_MAX_TOKENS = 4000
+
 # Document limits for safety
 MAX_PAGES = 200
 MAX_CHARS = 500000
@@ -1016,7 +1022,7 @@ def get_embeddings_batch(texts: List[str], client: OpenAI, batch_size: int = 100
         batch = texts[i:i + batch_size]
         try:
             response = client.embeddings.create(
-                model="text-embedding-3-small",
+                model=EMBEDDING_MODEL,
                 input=batch
             )
             batch_embeddings = [item.embedding for item in response.data]
@@ -1500,7 +1506,7 @@ def run_analysis_pass(
     
     try:
         response = client.chat.completions.create(
-            model="gpt-4o",
+            model=CHAT_MODEL,
             messages=[
                 {
                     "role": "system",
@@ -1508,8 +1514,8 @@ def run_analysis_pass(
                 },
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.2,
-            max_tokens=4000
+            temperature=CHAT_TEMPERATURE,
+            max_tokens=CHAT_MAX_TOKENS
         )
         raw_output = response.choices[0].message.content
     except Exception as e:
@@ -2302,7 +2308,7 @@ def render_footer():
     st.markdown(f"""
     <div class="footer">
         <p><strong>{APP_NAME}</strong> • {APP_TAGLINE}</p>
-        <p>Built with Streamlit • Powered by OpenAI GPT-4o • RAG-Enabled Multi-Pass Analysis</p>
+        <p>Built with Streamlit • Powered by OpenAI GPT-4o-mini • RAG-Enabled Multi-Pass Analysis</p>
     </div>
     """, unsafe_allow_html=True)
 

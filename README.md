@@ -4,7 +4,7 @@
 
 [![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://buildspec-ai.streamlit.app)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![OpenAI GPT-4o](https://img.shields.io/badge/OpenAI-GPT--4o-green.svg)](https://openai.com)
+[![OpenAI GPT-4o-mini](https://img.shields.io/badge/OpenAI-GPT--4o--mini-green.svg)](https://openai.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ---
@@ -137,7 +137,7 @@ Every finding includes:
 │  │  Pass 2: Contradiction Analysis                               │  │
 │  │  Pass 3: Compliance & Coordination                            │  │
 │  │  ─────────────────────────────────                            │  │
-│  │  • GPT-4o with structured prompts                             │  │
+│  │  • GPT-4o-mini with structured prompts                        │  │
 │  │  • JSON schema enforcement                                    │  │
 │  │  • Robust parsing with repair                                 │  │
 │  └──────────────────────────────────────────────────────────────┘  │
@@ -246,7 +246,7 @@ Robust handling of model output:
 ### Prerequisites
 
 - Python 3.9+
-- OpenAI API key with GPT-4o access
+- OpenAI API key with GPT-4o-mini access
 
 ### Installation
 
